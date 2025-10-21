@@ -170,13 +170,17 @@ def convert_date(value):
     if value is None or value == '':
         return None
     try:
-        # Parse DD.MM.YYYY format
-        parts = value.split('.')
+        # Parse DD.MM.YYYY format - handle both date and datetime strings
+        # Remove time portion if present (e.g., "17.09.2024 0:00:00")
+        date_part = value.split(' ')[0]
+        parts = date_part.split('.')
         if len(parts) == 3:
             day, month, year = parts
+            # Ensure proper padding for day and month
             return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
         return None
-    except:
+    except Exception as e:
+        print(f"  WARNING: Could not convert date '{value}': {e}")
         return None
 
 
@@ -276,39 +280,96 @@ def import_last_update(supabase: Client, data):
 def import_stratagems(supabase: Client, data):
     """Import Stratagems table."""
     print("  Importing Stratagems...")
-    supabase.table('stratagems').upsert(data).execute()
-    print(f"    Processed {len(data)} stratagems")
+    # Convert empty faction_id to 'UN' (Unaligned Forces) for universal stratagems
+    for row in data:
+        if row.get('faction_id') == '':
+            row['faction_id'] = 'UN'
+
+    # Deduplicate by id (keep last occurrence)
+    seen_ids = {}
+    for row in data:
+        seen_ids[row['id']] = row
+    deduplicated_data = list(seen_ids.values())
+
+    supabase.table('stratagems').upsert(deduplicated_data).execute()
+    print(f"    Processed {len(deduplicated_data)} stratagems")
 
 
 def import_abilities(supabase: Client, data):
     """Import Abilities table."""
     print("  Importing Abilities...")
-    supabase.table('abilities').upsert(data).execute()
-    print(f"    Processed {len(data)} abilities")
+    # Convert empty faction_id to 'UN' (Unaligned Forces) for universal abilities
+    for row in data:
+        if row.get('faction_id') == '':
+            row['faction_id'] = 'UN'
+
+    # Deduplicate by id (keep last occurrence)
+    seen_ids = {}
+    for row in data:
+        seen_ids[row['id']] = row
+    deduplicated_data = list(seen_ids.values())
+
+    supabase.table('abilities').upsert(deduplicated_data).execute()
+    print(f"    Processed {len(deduplicated_data)} abilities (from {len(data)} total records)")
 
 
 def import_enhancements(supabase: Client, data):
     """Import Enhancements table."""
     print("  Importing Enhancements...")
-    supabase.table('enhancements').upsert(data).execute()
-    print(f"    Processed {len(data)} enhancements")
+    # Convert empty faction_id to 'UN' (Unaligned Forces) for universal enhancements
+    for row in data:
+        if row.get('faction_id') == '':
+            row['faction_id'] = 'UN'
+
+    # Deduplicate by id (keep last occurrence)
+    seen_ids = {}
+    for row in data:
+        seen_ids[row['id']] = row
+    deduplicated_data = list(seen_ids.values())
+
+    supabase.table('enhancements').upsert(deduplicated_data).execute()
+    print(f"    Processed {len(deduplicated_data)} enhancements")
 
 
 def import_detachment_abilities(supabase: Client, data):
     """Import Detachment_abilities table."""
     print("  Importing Detachment_abilities...")
-    supabase.table('detachment_abilities').upsert(data).execute()
-    print(f"    Processed {len(data)} detachment abilities")
+    # Convert empty faction_id to 'UN' (Unaligned Forces) for universal detachment abilities
+    for row in data:
+        if row.get('faction_id') == '':
+            row['faction_id'] = 'UN'
+
+    # Deduplicate by id (keep last occurrence)
+    seen_ids = {}
+    for row in data:
+        seen_ids[row['id']] = row
+    deduplicated_data = list(seen_ids.values())
+
+    supabase.table('detachment_abilities').upsert(deduplicated_data).execute()
+    print(f"    Processed {len(deduplicated_data)} detachment abilities")
 
 
 def import_datasheets(supabase: Client, data):
     """Import Datasheets table."""
     print("  Importing Datasheets...")
-    # Convert boolean fields
+    # Convert boolean and foreign key fields
     for row in data:
         row['virtual'] = convert_boolean(row.get('virtual'))
-    supabase.table('datasheets').upsert(data).execute()
-    print(f"    Processed {len(data)} datasheets")
+        # Convert empty faction_id to 'UN' (Unaligned Forces) for universal datasheets
+        if row.get('faction_id') == '':
+            row['faction_id'] = 'UN'
+        # source_id is required - use first source if empty
+        if row.get('source_id') == '':
+            row['source_id'] = '000000012'  # Default to first source
+
+    # Deduplicate by id (keep last occurrence)
+    seen_ids = {}
+    for row in data:
+        seen_ids[row['id']] = row
+    deduplicated_data = list(seen_ids.values())
+
+    supabase.table('datasheets').upsert(deduplicated_data).execute()
+    print(f"    Processed {len(deduplicated_data)} datasheets")
 
 
 def import_datasheets_abilities(supabase: Client, data):
@@ -323,9 +384,12 @@ def import_datasheets_abilities(supabase: Client, data):
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
-    # Convert integer fields and insert new records
+    # Convert integer and foreign key fields
     for row in data:
         row['line'] = convert_int(row.get('line'))
+        # Convert empty ability_id to NULL
+        if row.get('ability_id') == '':
+            row['ability_id'] = None
 
     supabase.table('datasheets_abilities').insert(data).execute()
     print(f"    Processed {len(data)} datasheet abilities")
