@@ -6,7 +6,7 @@ This script downloads CSV files from web URLs and imports them into
 a local Supabase database with smart update detection and duplicate prevention.
 
 Requirements:
-    pip install psycopg2-binary requests python-dotenv
+    pip install supabase requests python-dotenv
 
 Usage:
     python 03_import_from_web.py
@@ -19,12 +19,11 @@ Configuration:
 import os
 import sys
 import requests
-import psycopg2
-from psycopg2 import sql, extras
 from datetime import datetime
 from io import StringIO
 import csv
 from dotenv import load_dotenv
+from supabase import create_client, Client
 
 # Load environment variables from .env file
 load_dotenv()
@@ -66,15 +65,10 @@ CSV_FILES = [
     "Datasheets_leader.csv",
 ]
 
-# Database connection configuration
+# Supabase client configuration
 # Loaded from .env file or environment variables
-DATABASE_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "port": int(os.getenv("DB_PORT", "54322")),
-    "database": os.getenv("DB_NAME", "postgres"),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "postgres"),
-}
+SUPABASE_URL = os.getenv("SUPABASE_URL", "http://localhost:8000")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # =====================================================================
 # HELPER FUNCTIONS
@@ -163,57 +157,91 @@ def convert_int(value):
         return None
 
 
-def connect_to_database():
+def convert_date(value):
     """
-    Establish connection to PostgreSQL database.
+    Convert DD.MM.YYYY date string to YYYY-MM-DD format for PostgreSQL.
+
+    Args:
+        value: Date string in DD.MM.YYYY format or empty
 
     Returns:
-        psycopg2 connection object
+        Date string in YYYY-MM-DD format or None
+    """
+    if value is None or value == '':
+        return None
+    try:
+        # Parse DD.MM.YYYY format
+        parts = value.split('.')
+        if len(parts) == 3:
+            day, month, year = parts
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        return None
+    except:
+        return None
+
+
+def connect_to_database():
+    """
+    Establish connection to Supabase using the Python client.
+
+    Returns:
+        Supabase Client object
 
     Raises:
-        psycopg2.Error: If connection fails
+        Exception: If connection fails
     """
-    print("Connecting to database...")
-    conn = psycopg2.connect(**DATABASE_CONFIG)
+    print("Connecting to Supabase...")
+    if not SUPABASE_KEY:
+        raise Exception("SUPABASE_KEY environment variable is required")
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     print("  Connected successfully!")
-    return conn
+    return supabase
 
 
 # =====================================================================
 # UPDATE CHECKING
 # =====================================================================
 
-def check_if_update_needed(cursor, new_update_time):
+def check_if_update_needed(supabase: Client, new_update_time):
     """
     Check if data needs to be updated based on Last_update timestamp.
 
     Args:
-        cursor: Database cursor
+        supabase: Supabase client
         new_update_time: New timestamp from Last_update.csv
 
     Returns:
         Boolean indicating if update is needed
     """
-    cursor.execute("SELECT MAX(last_update) FROM Last_update")
-    result = cursor.fetchone()
-    existing_update_time = result[0] if result else None
+    try:
+        response = supabase.table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
+        existing_update_time = None
 
-    if existing_update_time is None:
-        print(f"  No existing data found. Proceeding with import.")
-        return True
+        if response.data and len(response.data) > 0:
+            existing_update_time_str = response.data[0]['last_update']
+            # Parse the timestamp string from Supabase
+            existing_update_time = datetime.fromisoformat(existing_update_time_str.replace('Z', '+00:00'))
 
-    # Parse timestamps
-    new_ts = datetime.strptime(new_update_time, '%Y-%m-%d %H:%M:%S')
+        if existing_update_time is None:
+            print(f"  No existing data found. Proceeding with import.")
+            return True
 
-    if new_ts <= existing_update_time:
-        print(f"  Data is already up to date.")
-        print(f"  Existing: {existing_update_time}")
-        print(f"  New:      {new_ts}")
-        return False
-    else:
-        print(f"  New data available!")
-        print(f"  Existing: {existing_update_time}")
-        print(f"  New:      {new_ts}")
+        # Parse timestamps
+        new_ts = datetime.strptime(new_update_time, '%Y-%m-%d %H:%M:%S')
+
+        if new_ts <= existing_update_time:
+            print(f"  Data is already up to date.")
+            print(f"  Existing: {existing_update_time}")
+            print(f"  New:      {new_ts}")
+            return False
+        else:
+            print(f"  New data available!")
+            print(f"  Existing: {existing_update_time}")
+            print(f"  New:      {new_ts}")
+            return True
+    except Exception as e:
+        print(f"  Error checking updates: {e}")
+        print(f"  Proceeding with import...")
         return True
 
 
@@ -221,160 +249,69 @@ def check_if_update_needed(cursor, new_update_time):
 # IMPORT FUNCTIONS
 # =====================================================================
 
-def import_factions(cursor, data):
+def import_factions(supabase: Client, data):
     """Import Factions table."""
     print("  Importing Factions...")
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Factions (id, name, link)
-            VALUES (%(id)s, %(name)s, %(link)s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                link = EXCLUDED.link,
-                date_imported = CURRENT_TIMESTAMP
-        """, row)
+    supabase.table('factions').upsert(data).execute()
     print(f"    Processed {len(data)} factions")
 
 
-def import_source(cursor, data):
+def import_source(supabase: Client, data):
     """Import Source table."""
     print("  Importing Source...")
+    # Convert date fields to proper format
     for row in data:
-        cursor.execute("""
-            INSERT INTO Source (id, name, type, edition, version, errata_date, errata_link)
-            VALUES (%(id)s, %(name)s, %(type)s, %(edition)s, %(version)s, %(errata_date)s, %(errata_link)s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                type = EXCLUDED.type,
-                edition = EXCLUDED.edition,
-                version = EXCLUDED.version,
-                errata_date = EXCLUDED.errata_date,
-                errata_link = EXCLUDED.errata_link,
-                date_imported = CURRENT_TIMESTAMP
-        """, row)
+        row['errata_date'] = convert_date(row.get('errata_date'))
+    supabase.table('source').upsert(data).execute()
     print(f"    Processed {len(data)} sources")
 
 
-def import_last_update(cursor, data):
+def import_last_update(supabase: Client, data):
     """Import Last_update table."""
     print("  Importing Last_update...")
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Last_update (last_update)
-            VALUES (%(last_update)s)
-            ON CONFLICT (last_update) DO NOTHING
-        """, row)
+    supabase.table('last_update').upsert(data, on_conflict='last_update').execute()
     print(f"    Processed {len(data)} timestamp(s)")
 
 
-def import_stratagems(cursor, data):
+def import_stratagems(supabase: Client, data):
     """Import Stratagems table."""
     print("  Importing Stratagems...")
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Stratagems (id, faction_id, name, type, cp_cost, legend, turn, phase, description, detachment)
-            VALUES (%(id)s, %(faction_id)s, %(name)s, %(type)s, %(cp_cost)s, %(legend)s, %(turn)s, %(phase)s, %(description)s, %(detachment)s)
-            ON CONFLICT (id) DO UPDATE SET
-                faction_id = EXCLUDED.faction_id,
-                name = EXCLUDED.name,
-                type = EXCLUDED.type,
-                cp_cost = EXCLUDED.cp_cost,
-                legend = EXCLUDED.legend,
-                turn = EXCLUDED.turn,
-                phase = EXCLUDED.phase,
-                description = EXCLUDED.description,
-                detachment = EXCLUDED.detachment,
-                date_imported = CURRENT_TIMESTAMP
-        """, row)
+    supabase.table('stratagems').upsert(data).execute()
     print(f"    Processed {len(data)} stratagems")
 
 
-def import_abilities(cursor, data):
+def import_abilities(supabase: Client, data):
     """Import Abilities table."""
     print("  Importing Abilities...")
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Abilities (id, name, legend, faction_id, description)
-            VALUES (%(id)s, %(name)s, %(legend)s, %(faction_id)s, %(description)s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                legend = EXCLUDED.legend,
-                faction_id = EXCLUDED.faction_id,
-                description = EXCLUDED.description,
-                date_imported = CURRENT_TIMESTAMP
-        """, row)
+    supabase.table('abilities').upsert(data).execute()
     print(f"    Processed {len(data)} abilities")
 
 
-def import_enhancements(cursor, data):
+def import_enhancements(supabase: Client, data):
     """Import Enhancements table."""
     print("  Importing Enhancements...")
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Enhancements (id, faction_id, name, legend, description, cost, detachment)
-            VALUES (%(id)s, %(faction_id)s, %(name)s, %(legend)s, %(description)s, %(cost)s, %(detachment)s)
-            ON CONFLICT (id) DO UPDATE SET
-                faction_id = EXCLUDED.faction_id,
-                name = EXCLUDED.name,
-                legend = EXCLUDED.legend,
-                description = EXCLUDED.description,
-                cost = EXCLUDED.cost,
-                detachment = EXCLUDED.detachment,
-                date_imported = CURRENT_TIMESTAMP
-        """, row)
+    supabase.table('enhancements').upsert(data).execute()
     print(f"    Processed {len(data)} enhancements")
 
 
-def import_detachment_abilities(cursor, data):
+def import_detachment_abilities(supabase: Client, data):
     """Import Detachment_abilities table."""
     print("  Importing Detachment_abilities...")
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Detachment_abilities (id, faction_id, name, legend, description, detachment)
-            VALUES (%(id)s, %(faction_id)s, %(name)s, %(legend)s, %(description)s, %(detachment)s)
-            ON CONFLICT (id) DO UPDATE SET
-                faction_id = EXCLUDED.faction_id,
-                name = EXCLUDED.name,
-                legend = EXCLUDED.legend,
-                description = EXCLUDED.description,
-                detachment = EXCLUDED.detachment,
-                date_imported = CURRENT_TIMESTAMP
-        """, row)
+    supabase.table('detachment_abilities').upsert(data).execute()
     print(f"    Processed {len(data)} detachment abilities")
 
 
-def import_datasheets(cursor, data):
+def import_datasheets(supabase: Client, data):
     """Import Datasheets table."""
     print("  Importing Datasheets...")
+    # Convert boolean fields
     for row in data:
-        # Convert boolean field
         row['virtual'] = convert_boolean(row.get('virtual'))
-
-        cursor.execute("""
-            INSERT INTO Datasheets (id, name, faction_id, source_id, legend, role, loadout, transport, virtual,
-                                    leader_head, leader_footer, damaged_w, damaged_description, link)
-            VALUES (%(id)s, %(name)s, %(faction_id)s, %(source_id)s, %(legend)s, %(role)s, %(loadout)s, %(transport)s, %(virtual)s,
-                    %(leader_head)s, %(leader_footer)s, %(damaged_w)s, %(damaged_description)s, %(link)s)
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                faction_id = EXCLUDED.faction_id,
-                source_id = EXCLUDED.source_id,
-                legend = EXCLUDED.legend,
-                role = EXCLUDED.role,
-                loadout = EXCLUDED.loadout,
-                transport = EXCLUDED.transport,
-                virtual = EXCLUDED.virtual,
-                leader_head = EXCLUDED.leader_head,
-                leader_footer = EXCLUDED.leader_footer,
-                damaged_w = EXCLUDED.damaged_w,
-                damaged_description = EXCLUDED.damaged_description,
-                link = EXCLUDED.link,
-                date_imported = CURRENT_TIMESTAMP
-        """, row)
+    supabase.table('datasheets').upsert(data).execute()
     print(f"    Processed {len(data)} datasheets")
 
 
-def import_datasheets_abilities(cursor, data):
+def import_datasheets_abilities(supabase: Client, data):
     """Import Datasheets_abilities table."""
     print("  Importing Datasheets_abilities...")
 
@@ -383,225 +320,173 @@ def import_datasheets_abilities(cursor, data):
 
     # Delete existing records for these datasheets
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_abilities WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
-    # Insert new records
+    # Convert integer fields and insert new records
     for row in data:
         row['line'] = convert_int(row.get('line'))
-        cursor.execute("""
-            INSERT INTO Datasheets_abilities (datasheet_id, line, ability_id, model, name, description, type, parameter)
-            VALUES (%(datasheet_id)s, %(line)s, %(ability_id)s, %(model)s, %(name)s, %(description)s, %(type)s, %(parameter)s)
-        """, row)
+
+    supabase.table('datasheets_abilities').insert(data).execute()
     print(f"    Processed {len(data)} datasheet abilities")
 
 
-def import_datasheets_keywords(cursor, data):
+def import_datasheets_keywords(supabase: Client, data):
     """Import Datasheets_keywords table."""
     print("  Importing Datasheets_keywords...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_keywords WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_keywords').delete().eq('datasheet_id', datasheet_id).execute()
 
     for row in data:
         row['is_faction_keyword'] = convert_boolean(row.get('is_faction_keyword'))
-        cursor.execute("""
-            INSERT INTO Datasheets_keywords (datasheet_id, keyword, model, is_faction_keyword)
-            VALUES (%(datasheet_id)s, %(keyword)s, %(model)s, %(is_faction_keyword)s)
-        """, row)
+
+    supabase.table('datasheets_keywords').insert(data).execute()
     print(f"    Processed {len(data)} datasheet keywords")
 
 
-def import_datasheets_models(cursor, data):
+def import_datasheets_models(supabase: Client, data):
     """Import Datasheets_models table."""
     print("  Importing Datasheets_models...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_models WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_models').delete().eq('datasheet_id', datasheet_id).execute()
 
     for row in data:
         row['line'] = convert_int(row.get('line'))
-        cursor.execute("""
-            INSERT INTO Datasheets_models (datasheet_id, line, name, M, T, Sv, inv_sv, inv_sv_descr, W, Ld, OC, base_size, base_size_descr)
-            VALUES (%(datasheet_id)s, %(line)s, %(name)s, %(M)s, %(T)s, %(Sv)s, %(inv_sv)s, %(inv_sv_descr)s, %(W)s, %(Ld)s, %(OC)s, %(base_size)s, %(base_size_descr)s)
-        """, row)
+
+    supabase.table('datasheets_models').insert(data).execute()
     print(f"    Processed {len(data)} datasheet models")
 
 
-def import_datasheets_options(cursor, data):
+def import_datasheets_options(supabase: Client, data):
     """Import Datasheets_options table."""
     print("  Importing Datasheets_options...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_options WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_options').delete().eq('datasheet_id', datasheet_id).execute()
 
     for row in data:
         row['line'] = convert_int(row.get('line'))
-        cursor.execute("""
-            INSERT INTO Datasheets_options (datasheet_id, line, button, description)
-            VALUES (%(datasheet_id)s, %(line)s, %(button)s, %(description)s)
-        """, row)
+
+    supabase.table('datasheets_options').insert(data).execute()
     print(f"    Processed {len(data)} datasheet options")
 
 
-def import_datasheets_wargear(cursor, data):
+def import_datasheets_wargear(supabase: Client, data):
     """Import Datasheets_wargear table."""
     print("  Importing Datasheets_wargear...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_wargear WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_wargear').delete().eq('datasheet_id', datasheet_id).execute()
 
     for row in data:
         row['line'] = convert_int(row.get('line'))
         row['line_in_wargear'] = convert_int(row.get('line_in_wargear'))
-        cursor.execute("""
-            INSERT INTO Datasheets_wargear (datasheet_id, line, line_in_wargear, dice, name, description, range, type, A, BS_WS, S, AP, D)
-            VALUES (%(datasheet_id)s, %(line)s, %(line_in_wargear)s, %(dice)s, %(name)s, %(description)s, %(range)s, %(type)s, %(A)s, %(BS_WS)s, %(S)s, %(AP)s, %(D)s)
-        """, row)
+
+    supabase.table('datasheets_wargear').insert(data).execute()
     print(f"    Processed {len(data)} datasheet wargear")
 
 
-def import_datasheets_unit_composition(cursor, data):
+def import_datasheets_unit_composition(supabase: Client, data):
     """Import Datasheets_unit_composition table."""
     print("  Importing Datasheets_unit_composition...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_unit_composition WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_unit_composition').delete().eq('datasheet_id', datasheet_id).execute()
 
     for row in data:
         row['line'] = convert_int(row.get('line'))
-        cursor.execute("""
-            INSERT INTO Datasheets_unit_composition (datasheet_id, line, description)
-            VALUES (%(datasheet_id)s, %(line)s, %(description)s)
-        """, row)
+
+    supabase.table('datasheets_unit_composition').insert(data).execute()
     print(f"    Processed {len(data)} unit compositions")
 
 
-def import_datasheets_models_cost(cursor, data):
+def import_datasheets_models_cost(supabase: Client, data):
     """Import Datasheets_models_cost table."""
     print("  Importing Datasheets_models_cost...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_models_cost WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_models_cost').delete().eq('datasheet_id', datasheet_id).execute()
 
     for row in data:
         row['line'] = convert_int(row.get('line'))
-        cursor.execute("""
-            INSERT INTO Datasheets_models_cost (datasheet_id, line, description, cost)
-            VALUES (%(datasheet_id)s, %(line)s, %(description)s, %(cost)s)
-        """, row)
+
+    supabase.table('datasheets_models_cost').insert(data).execute()
     print(f"    Processed {len(data)} model costs")
 
 
-def import_datasheets_stratagems(cursor, data):
+def import_datasheets_stratagems(supabase: Client, data):
     """Import Datasheets_stratagems junction table."""
     print("  Importing Datasheets_stratagems...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_stratagems WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_stratagems').delete().eq('datasheet_id', datasheet_id).execute()
 
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Datasheets_stratagems (datasheet_id, stratagem_id)
-            VALUES (%(datasheet_id)s, %(stratagem_id)s)
-        """, row)
+    supabase.table('datasheets_stratagems').insert(data).execute()
     print(f"    Processed {len(data)} datasheet-stratagem links")
 
 
-def import_datasheets_enhancements(cursor, data):
+def import_datasheets_enhancements(supabase: Client, data):
     """Import Datasheets_enhancements junction table."""
     print("  Importing Datasheets_enhancements...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_enhancements WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_enhancements').delete().eq('datasheet_id', datasheet_id).execute()
 
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Datasheets_enhancements (datasheet_id, enhancement_id)
-            VALUES (%(datasheet_id)s, %(enhancement_id)s)
-        """, row)
+    supabase.table('datasheets_enhancements').insert(data).execute()
     print(f"    Processed {len(data)} datasheet-enhancement links")
 
 
-def import_datasheets_detachment_abilities(cursor, data):
+def import_datasheets_detachment_abilities(supabase: Client, data):
     """Import Datasheets_detachment_abilities junction table."""
     print("  Importing Datasheets_detachment_abilities...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_detachment_abilities WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_detachment_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Datasheets_detachment_abilities (datasheet_id, detachment_ability_id)
-            VALUES (%(datasheet_id)s, %(detachment_ability_id)s)
-        """, row)
+    supabase.table('datasheets_detachment_abilities').insert(data).execute()
     print(f"    Processed {len(data)} datasheet-detachment ability links")
 
 
-def import_datasheets_leader(cursor, data):
+def import_datasheets_leader(supabase: Client, data):
     """Import Datasheets_leader junction table."""
     print("  Importing Datasheets_leader...")
 
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
     if datasheet_ids:
-        cursor.execute(
-            "DELETE FROM Datasheets_leader WHERE datasheet_id = ANY(%s)",
-            (list(datasheet_ids),)
-        )
+        for datasheet_id in datasheet_ids:
+            supabase.table('datasheets_leader').delete().eq('datasheet_id', datasheet_id).execute()
 
-    for row in data:
-        cursor.execute("""
-            INSERT INTO Datasheets_leader (datasheet_id, attached_datasheet_id)
-            VALUES (%(datasheet_id)s, %(attached_datasheet_id)s)
-        """, row)
+    supabase.table('datasheets_leader').insert(data).execute()
     print(f"    Processed {len(data)} leader-attachment links")
 
 
@@ -639,8 +524,7 @@ def main():
     print("Wahapedia CSV Importer for Supabase")
     print("=" * 70)
 
-    conn = None
-    cursor = None
+    supabase = None
 
     try:
         # Step 1: Download and check Last_update.csv first
@@ -655,12 +539,11 @@ def main():
 
         new_timestamp = last_update_data[0]['last_update']
 
-        # Connect to database
-        conn = connect_to_database()
-        cursor = conn.cursor()
+        # Connect to Supabase
+        supabase = connect_to_database()
 
         # Check if update is needed
-        if not check_if_update_needed(cursor, new_timestamp):
+        if not check_if_update_needed(supabase, new_timestamp):
             print("\n  Skipping import - data is already current.")
             return
 
@@ -685,40 +568,32 @@ def main():
             if csv_file in csv_data and csv_data[csv_file]:
                 import_func = IMPORT_FUNCTIONS.get(csv_file)
                 if import_func:
-                    import_func(cursor, csv_data[csv_file])
+                    import_func(supabase, csv_data[csv_file])
                 else:
                     print(f"  WARNING: No import function for {csv_file}")
-
-        # Commit all changes
-        conn.commit()
 
         # Display summary
         print("\n" + "=" * 70)
         print("Import completed successfully!")
         print("=" * 70)
 
-        cursor.execute("SELECT COUNT(*) FROM Factions")
-        print(f"  Factions: {cursor.fetchone()[0]}")
+        factions_count = supabase.table('factions').select('*', count='exact').execute()
+        print(f"  Factions: {factions_count.count}")
 
-        cursor.execute("SELECT COUNT(*) FROM Datasheets")
-        print(f"  Datasheets: {cursor.fetchone()[0]}")
+        datasheets_count = supabase.table('datasheets').select('*', count='exact').execute()
+        print(f"  Datasheets: {datasheets_count.count}")
 
-        cursor.execute("SELECT COUNT(*) FROM Stratagems")
-        print(f"  Stratagems: {cursor.fetchone()[0]}")
+        stratagems_count = supabase.table('stratagems').select('*', count='exact').execute()
+        print(f"  Stratagems: {stratagems_count.count}")
 
-        cursor.execute("SELECT COUNT(*) FROM Abilities")
-        print(f"  Abilities: {cursor.fetchone()[0]}")
+        abilities_count = supabase.table('abilities').select('*', count='exact').execute()
+        print(f"  Abilities: {abilities_count.count}")
 
-        cursor.execute("SELECT MAX(last_update) FROM Last_update")
-        print(f"  Last update: {cursor.fetchone()[0]}")
+        last_update = supabase.table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
+        if last_update.data and len(last_update.data) > 0:
+            print(f"  Last update: {last_update.data[0]['last_update']}")
 
         print("=" * 70)
-
-    except psycopg2.Error as e:
-        print(f"\n  DATABASE ERROR: {e}")
-        if conn:
-            conn.rollback()
-        sys.exit(1)
 
     except requests.RequestException as e:
         print(f"\n  DOWNLOAD ERROR: {e}")
@@ -726,16 +601,9 @@ def main():
 
     except Exception as e:
         print(f"\n  UNEXPECTED ERROR: {e}")
-        if conn:
-            conn.rollback()
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-            print("\n  Database connection closed.")
 
 
 if __name__ == "__main__":
