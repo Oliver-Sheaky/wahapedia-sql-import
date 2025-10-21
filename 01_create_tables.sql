@@ -9,6 +9,69 @@
 -- CSV Delimiter: | (pipe/vertical bar)
 -- =====================================================================
 
+-- Begin transaction: all tables will be created atomically
+-- If any error occurs, all changes will be rolled back
+BEGIN;
+
+-- =====================================================================
+-- DROP EXISTING TABLES (if any)
+-- Drops in reverse order of creation to handle foreign key dependencies
+-- =====================================================================
+
+-- Drop indexes first
+DROP INDEX IF EXISTS idx_source_errata_date;
+DROP INDEX IF EXISTS idx_detachment_abilities_faction_id;
+DROP INDEX IF EXISTS idx_enhancements_faction_id;
+DROP INDEX IF EXISTS idx_abilities_faction_id;
+DROP INDEX IF EXISTS idx_stratagems_faction_id;
+DROP INDEX IF EXISTS idx_datasheets_leader_attached;
+DROP INDEX IF EXISTS idx_datasheets_leader_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_detachment_abilities_ability;
+DROP INDEX IF EXISTS idx_datasheets_detachment_abilities_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_enhancements_enhancement;
+DROP INDEX IF EXISTS idx_datasheets_enhancements_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_stratagems_stratagem;
+DROP INDEX IF EXISTS idx_datasheets_stratagems_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_models_cost_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_unit_composition_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_wargear_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_options_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_models_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_keywords_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_abilities_ability;
+DROP INDEX IF EXISTS idx_datasheets_abilities_datasheet;
+DROP INDEX IF EXISTS idx_datasheets_source_id;
+DROP INDEX IF EXISTS idx_datasheets_faction_id;
+
+-- Drop junction tables
+DROP TABLE IF EXISTS Datasheets_leader;
+DROP TABLE IF EXISTS Datasheets_detachment_abilities;
+DROP TABLE IF EXISTS Datasheets_enhancements;
+DROP TABLE IF EXISTS Datasheets_stratagems;
+
+-- Drop datasheets child tables
+DROP TABLE IF EXISTS Datasheets_models_cost;
+DROP TABLE IF EXISTS Datasheets_unit_composition;
+DROP TABLE IF EXISTS Datasheets_wargear;
+DROP TABLE IF EXISTS Datasheets_options;
+DROP TABLE IF EXISTS Datasheets_models;
+DROP TABLE IF EXISTS Datasheets_keywords;
+DROP TABLE IF EXISTS Datasheets_abilities;
+
+-- Drop datasheets table
+DROP TABLE IF EXISTS Datasheets;
+
+-- Drop game content tables
+DROP TABLE IF EXISTS Detachment_abilities;
+DROP TABLE IF EXISTS Enhancements;
+DROP TABLE IF EXISTS Abilities;
+DROP TABLE IF EXISTS Stratagems;
+
+-- Drop core reference tables
+DROP TABLE IF EXISTS Last_update;
+DROP TABLE IF EXISTS Source;
+DROP TABLE IF EXISTS Factions;
+
 -- =====================================================================
 -- CORE REFERENCE TABLES
 -- These tables store foundational data referenced by other tables
@@ -39,6 +102,72 @@ CREATE TABLE Source (
 CREATE TABLE Last_update (
     last_update TIMESTAMP PRIMARY KEY,  -- Format: yyyy-MM-dd HH:mm:ss (GMT+3)
     date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================================
+-- GAME CONTENT TABLES
+-- These tables store stratagems, abilities, enhancements, etc.
+-- Must be created BEFORE Datasheets tables that reference them
+-- =====================================================================
+
+-- Stratagems table: stores all stratagems
+CREATE TABLE Stratagems (
+    id VARCHAR(100) PRIMARY KEY,
+    faction_id VARCHAR(100) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(255),  -- e.g., "Shield Host – Strategic Ploy Stratagem"
+    cp_cost VARCHAR(50),  -- Command Point cost
+    legend TEXT,  -- HTML formatted background
+    turn VARCHAR(100),
+    phase VARCHAR(100),
+    description TEXT,  -- HTML formatted
+    detachment VARCHAR(255),
+    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign key constraint
+    CONSTRAINT fk_stratagems_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
+);
+
+-- Abilities table: stores all abilities
+CREATE TABLE Abilities (
+    id VARCHAR(100) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    legend TEXT,  -- HTML formatted background
+    faction_id VARCHAR(100) NOT NULL,
+    description TEXT,  -- HTML formatted
+    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign key constraint
+    CONSTRAINT fk_abilities_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
+);
+
+-- Enhancements table: stores all enhancements
+CREATE TABLE Enhancements (
+    id VARCHAR(100) PRIMARY KEY,
+    faction_id VARCHAR(100) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    legend TEXT,  -- HTML formatted
+    description TEXT,  -- HTML formatted
+    cost VARCHAR(50),  -- Points cost
+    detachment VARCHAR(255),
+    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign key constraint
+    CONSTRAINT fk_enhancements_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
+);
+
+-- Detachment_abilities table: stores all detachment abilities
+CREATE TABLE Detachment_abilities (
+    id VARCHAR(100) PRIMARY KEY,
+    faction_id VARCHAR(100) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    legend TEXT,  -- HTML formatted
+    description TEXT,  -- HTML formatted
+    detachment VARCHAR(255),
+    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign key constraint
+    CONSTRAINT fk_detachment_abilities_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
 );
 
 -- =====================================================================
@@ -258,71 +387,6 @@ CREATE TABLE Datasheets_leader (
 );
 
 -- =====================================================================
--- GAME CONTENT TABLES
--- These tables store stratagems, abilities, enhancements, etc.
--- =====================================================================
-
--- Stratagems table: stores all stratagems
-CREATE TABLE Stratagems (
-    id VARCHAR(100) PRIMARY KEY,
-    faction_id VARCHAR(100) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    type VARCHAR(255),  -- e.g., "Shield Host – Strategic Ploy Stratagem"
-    cp_cost VARCHAR(50),  -- Command Point cost
-    legend TEXT,  -- HTML formatted background
-    turn VARCHAR(100),
-    phase VARCHAR(100),
-    description TEXT,  -- HTML formatted
-    detachment VARCHAR(255),
-    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- Foreign key constraint
-    CONSTRAINT fk_stratagems_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
-);
-
--- Abilities table: stores all abilities
-CREATE TABLE Abilities (
-    id VARCHAR(100) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    legend TEXT,  -- HTML formatted background
-    faction_id VARCHAR(100) NOT NULL,
-    description TEXT,  -- HTML formatted
-    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- Foreign key constraint
-    CONSTRAINT fk_abilities_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
-);
-
--- Enhancements table: stores all enhancements
-CREATE TABLE Enhancements (
-    id VARCHAR(100) PRIMARY KEY,
-    faction_id VARCHAR(100) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    legend TEXT,  -- HTML formatted
-    description TEXT,  -- HTML formatted
-    cost VARCHAR(50),  -- Points cost
-    detachment VARCHAR(255),
-    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- Foreign key constraint
-    CONSTRAINT fk_enhancements_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
-);
-
--- Detachment_abilities table: stores all detachment abilities
-CREATE TABLE Detachment_abilities (
-    id VARCHAR(100) PRIMARY KEY,
-    faction_id VARCHAR(100) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    legend TEXT,  -- HTML formatted
-    description TEXT,  -- HTML formatted
-    detachment VARCHAR(255),
-    date_imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    -- Foreign key constraint
-    CONSTRAINT fk_detachment_abilities_faction FOREIGN KEY (faction_id) REFERENCES Factions(id)
-);
-
--- =====================================================================
 -- INDEXES FOR PERFORMANCE
 -- Create indexes on foreign keys and frequently queried columns
 -- =====================================================================
@@ -365,6 +429,7 @@ CREATE INDEX idx_source_errata_date ON Source(errata_date);
 -- =====================================================================
 --
 -- For SQL Server:
+-- - Replace BEGIN with BEGIN TRANSACTION
 -- - Replace TIMESTAMP with DATETIME2
 -- - Replace CURRENT_TIMESTAMP with GETDATE()
 -- - Replace TEXT with VARCHAR(MAX)
@@ -376,4 +441,5 @@ CREATE INDEX idx_source_errata_date ON Source(errata_date);
 --
 -- =====================================================================
 
+-- Commit transaction: all tables created successfully
 COMMIT;
