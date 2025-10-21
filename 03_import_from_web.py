@@ -12,8 +12,8 @@ Usage:
     python 03_import_from_web.py
 
 Configuration:
-    Edit the CSV_BASE_URL and DATABASE_CONFIG variables below,
-    or use a .env file for sensitive credentials.
+    Copy example.env to .env and update with your database credentials.
+    The script will automatically load configuration from .env file.
 """
 
 import os
@@ -24,6 +24,10 @@ from psycopg2 import sql, extras
 from datetime import datetime
 from io import StringIO
 import csv
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Fix Windows console encoding issues
 if sys.platform == 'win32':
@@ -36,8 +40,8 @@ if sys.platform == 'win32':
 # =====================================================================
 
 # Base URL where CSV files are hosted
-# Example: "https://wahapedia.ru/wh40k10ed/Export/"
-CSV_BASE_URL = "http://wahapedia.ru/wh40k10ed/"
+# Can be overridden by CSV_BASE_URL environment variable
+CSV_BASE_URL = os.getenv("CSV_BASE_URL", "http://wahapedia.ru/wh40k10ed/")
 
 # List of all CSV files to download and import
 CSV_FILES = [
@@ -63,26 +67,14 @@ CSV_FILES = [
 ]
 
 # Database connection configuration
-# For local Supabase, typically:
+# Loaded from .env file or environment variables
 DATABASE_CONFIG = {
-    "host": "localhost",
-    "port": 54322,  # Default Supabase local port
-    "database": "postgres",
-    "user": "postgres",
-    "password": "postgres",  # Change this to your password
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", "54322")),
+    "database": os.getenv("DB_NAME", "postgres"),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "postgres"),
 }
-
-# Alternatively, use environment variables or .env file
-# Uncomment to use .env:
-# from dotenv import load_dotenv
-# load_dotenv()
-# DATABASE_CONFIG = {
-#     "host": os.getenv("DB_HOST", "localhost"),
-#     "port": os.getenv("DB_PORT", "54322"),
-#     "database": os.getenv("DB_NAME", "postgres"),
-#     "user": os.getenv("DB_USER", "postgres"),
-#     "password": os.getenv("DB_PASSWORD", "postgres"),
-# }
 
 # =====================================================================
 # HELPER FUNCTIONS
