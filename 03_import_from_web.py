@@ -184,6 +184,12 @@ def convert_date(value):
         return None
 
 
+def get_valid_datasheet_ids(supabase: Client):
+    """Helper to get valid datasheet IDs for child table validation."""
+    response = supabase.table('datasheets').select('id').execute()
+    return set(row['id'] for row in response.data)
+
+
 def connect_to_database():
     """
     Establish connection to Supabase using the Python client.
@@ -384,174 +390,312 @@ def import_datasheets_abilities(supabase: Client, data):
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
-    # Convert integer and foreign key fields
+    # Get existing IDs to validate foreign keys
+    abilities_response = supabase.table('abilities').select('id').execute()
+    valid_ability_ids = set(row['id'] for row in abilities_response.data)
+
+    datasheets_response = supabase.table('datasheets').select('id').execute()
+    valid_datasheet_ids = set(row['id'] for row in datasheets_response.data)
+
+    # Convert integer and foreign key fields, filter invalid references
+    valid_data = []
+    skipped_count = 0
     for row in data:
         row['line'] = convert_int(row.get('line'))
         # Convert empty ability_id to NULL
         if row.get('ability_id') == '':
             row['ability_id'] = None
 
-    supabase.table('datasheets_abilities').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet abilities")
+        # Skip if datasheet_id or ability_id references non-existent records
+        if row['datasheet_id'] not in valid_datasheet_ids:
+            skipped_count += 1
+            continue
+        if row['ability_id'] is not None and row['ability_id'] not in valid_ability_ids:
+            skipped_count += 1
+            continue
+
+        valid_data.append(row)
+
+    if valid_data:
+        supabase.table('datasheets_abilities').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} datasheet abilities (skipped {skipped_count} with invalid ability references)")
 
 
 def import_datasheets_keywords(supabase: Client, data):
     """Import Datasheets_keywords table."""
     print("  Importing Datasheets_keywords...")
 
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    # Get valid datasheet IDs
+    datasheets_response = supabase.table('datasheets').select('id').execute()
+    valid_datasheet_ids = set(row['id'] for row in datasheets_response.data)
+
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_keywords').delete().eq('datasheet_id', datasheet_id).execute()
 
+    # Filter and convert data
+    valid_data = []
+    skipped_count = 0
     for row in data:
+        if row['datasheet_id'] not in valid_datasheet_ids:
+            skipped_count += 1
+            continue
         row['is_faction_keyword'] = convert_boolean(row.get('is_faction_keyword'))
+        valid_data.append(row)
 
-    supabase.table('datasheets_keywords').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet keywords")
+    # Deduplicate by composite key (datasheet_id, keyword)
+    seen_keys = {}
+    for row in valid_data:
+        key = (row['datasheet_id'], row['keyword'])
+        seen_keys[key] = row
+    deduplicated_data = list(seen_keys.values())
+
+    if deduplicated_data:
+        supabase.table('datasheets_keywords').insert(deduplicated_data).execute()
+    print(f"    Processed {len(deduplicated_data)} datasheet keywords (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_models(supabase: Client, data):
     """Import Datasheets_models table."""
     print("  Importing Datasheets_models...")
 
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    # Get valid datasheet IDs
+    datasheets_response = supabase.table('datasheets').select('id').execute()
+    valid_datasheet_ids = set(row['id'] for row in datasheets_response.data)
 
+    # Filter valid datasheets and delete their existing records
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_models').delete().eq('datasheet_id', datasheet_id).execute()
 
+    # Filter and convert data, map uppercase column names to lowercase
+    valid_data = []
+    skipped_count = 0
     for row in data:
+        if row['datasheet_id'] not in valid_datasheet_ids:
+            skipped_count += 1
+            continue
         row['line'] = convert_int(row.get('line'))
+        # Map uppercase stat names to lowercase for database compatibility
+        if 'M' in row:
+            row['m'] = row.pop('M')
+        if 'T' in row:
+            row['t'] = row.pop('T')
+        if 'Sv' in row:
+            row['sv'] = row.pop('Sv')
+        if 'W' in row:
+            row['w'] = row.pop('W')
+        if 'Ld' in row:
+            row['ld'] = row.pop('Ld')
+        if 'OC' in row:
+            row['oc'] = row.pop('OC')
+        valid_data.append(row)
 
-    supabase.table('datasheets_models').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet models")
+    if valid_data:
+        supabase.table('datasheets_models').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} datasheet models (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_options(supabase: Client, data):
     """Import Datasheets_options table."""
     print("  Importing Datasheets_options...")
-
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_options').delete().eq('datasheet_id', datasheet_id).execute()
 
+    valid_data = []
+    skipped_count = 0
     for row in data:
+        if row['datasheet_id'] not in valid_datasheet_ids:
+            skipped_count += 1
+            continue
         row['line'] = convert_int(row.get('line'))
+        valid_data.append(row)
 
-    supabase.table('datasheets_options').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet options")
+    if valid_data:
+        supabase.table('datasheets_options').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} datasheet options (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_wargear(supabase: Client, data):
     """Import Datasheets_wargear table."""
     print("  Importing Datasheets_wargear...")
 
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    # Get valid datasheet IDs
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_wargear').delete().eq('datasheet_id', datasheet_id).execute()
 
+    valid_data = []
+    skipped_count = 0
     for row in data:
+        if row['datasheet_id'] not in valid_datasheet_ids:
+            skipped_count += 1
+            continue
         row['line'] = convert_int(row.get('line'))
         row['line_in_wargear'] = convert_int(row.get('line_in_wargear'))
+        # Map uppercase stat names to lowercase for database compatibility
+        if 'A' in row:
+            row['a'] = row.pop('A')
+        if 'BS_WS' in row:
+            row['bs_ws'] = row.pop('BS_WS')
+        if 'S' in row:
+            row['s'] = row.pop('S')
+        if 'AP' in row:
+            row['ap'] = row.pop('AP')
+        if 'D' in row:
+            row['d'] = row.pop('D')
+        valid_data.append(row)
 
-    supabase.table('datasheets_wargear').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet wargear")
+    if valid_data:
+        supabase.table('datasheets_wargear').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} datasheet wargear (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_unit_composition(supabase: Client, data):
     """Import Datasheets_unit_composition table."""
     print("  Importing Datasheets_unit_composition...")
-
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_unit_composition').delete().eq('datasheet_id', datasheet_id).execute()
 
+    valid_data = []
+    skipped_count = 0
     for row in data:
+        if row['datasheet_id'] not in valid_datasheet_ids:
+            skipped_count += 1
+            continue
         row['line'] = convert_int(row.get('line'))
+        valid_data.append(row)
 
-    supabase.table('datasheets_unit_composition').insert(data).execute()
-    print(f"    Processed {len(data)} unit compositions")
+    if valid_data:
+        supabase.table('datasheets_unit_composition').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} unit compositions (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_models_cost(supabase: Client, data):
     """Import Datasheets_models_cost table."""
     print("  Importing Datasheets_models_cost...")
-
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_models_cost').delete().eq('datasheet_id', datasheet_id).execute()
 
+    valid_data = []
+    skipped_count = 0
     for row in data:
+        if row['datasheet_id'] not in valid_datasheet_ids:
+            skipped_count += 1
+            continue
         row['line'] = convert_int(row.get('line'))
+        valid_data.append(row)
 
-    supabase.table('datasheets_models_cost').insert(data).execute()
-    print(f"    Processed {len(data)} model costs")
+    if valid_data:
+        supabase.table('datasheets_models_cost').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} model costs (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_stratagems(supabase: Client, data):
     """Import Datasheets_stratagems junction table."""
     print("  Importing Datasheets_stratagems...")
-
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_stratagems').delete().eq('datasheet_id', datasheet_id).execute()
 
-    supabase.table('datasheets_stratagems').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet-stratagem links")
+    valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
+    skipped_count = len(data) - len(valid_data)
+
+    if valid_data:
+        supabase.table('datasheets_stratagems').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} datasheet-stratagem links (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_enhancements(supabase: Client, data):
     """Import Datasheets_enhancements junction table."""
     print("  Importing Datasheets_enhancements...")
-
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_enhancements').delete().eq('datasheet_id', datasheet_id).execute()
 
-    supabase.table('datasheets_enhancements').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet-enhancement links")
+    valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
+    skipped_count = len(data) - len(valid_data)
+
+    if valid_data:
+        supabase.table('datasheets_enhancements').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} datasheet-enhancement links (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_detachment_abilities(supabase: Client, data):
     """Import Datasheets_detachment_abilities junction table."""
     print("  Importing Datasheets_detachment_abilities...")
-
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_detachment_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
-    supabase.table('datasheets_detachment_abilities').insert(data).execute()
-    print(f"    Processed {len(data)} datasheet-detachment ability links")
+    valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
+    skipped_count = len(data) - len(valid_data)
+
+    if valid_data:
+        supabase.table('datasheets_detachment_abilities').insert(valid_data).execute()
+    print(f"    Processed {len(valid_data)} datasheet-detachment ability links (skipped {skipped_count} orphaned)")
 
 
 def import_datasheets_leader(supabase: Client, data):
     """Import Datasheets_leader junction table."""
     print("  Importing Datasheets_leader...")
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
 
-    datasheet_ids = set(row['datasheet_id'] for row in data)
+    # Map CSV column names to database column names
+    for row in data:
+        if 'leader_id' in row:
+            row['datasheet_id'] = row.pop('leader_id')
+        if 'attached_id' in row:
+            row['attached_datasheet_id'] = row.pop('attached_id')
+
+    datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_leader').delete().eq('datasheet_id', datasheet_id).execute()
 
-    supabase.table('datasheets_leader').insert(data).execute()
-    print(f"    Processed {len(data)} leader-attachment links")
+    # Both datasheet_id and attached_datasheet_id must be valid
+    valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids and row.get('attached_datasheet_id') in valid_datasheet_ids]
+
+    # Deduplicate by composite key (datasheet_id, attached_datasheet_id)
+    seen_keys = {}
+    for row in valid_data:
+        key = (row['datasheet_id'], row['attached_datasheet_id'])
+        seen_keys[key] = row
+    deduplicated_data = list(seen_keys.values())
+
+    skipped_count = len(data) - len(deduplicated_data)
+
+    if deduplicated_data:
+        supabase.table('datasheets_leader').insert(deduplicated_data).execute()
+    print(f"    Processed {len(deduplicated_data)} leader-attachment links (skipped {skipped_count} orphaned/duplicates)")
 
 
 # =====================================================================
