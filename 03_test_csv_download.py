@@ -9,7 +9,7 @@ Requirements:
     pip install requests
 
 Usage:
-    python 04_test_csv_download.py
+    python 03_test_csv_download.py
 """
 
 import requests
