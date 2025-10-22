@@ -19,6 +19,7 @@ Configuration:
 import os
 import sys
 import requests
+import time
 from datetime import datetime
 from io import StringIO
 import csv
@@ -37,6 +38,9 @@ if sys.platform == 'win32':
 # =====================================================================
 # CONFIGURATION
 # =====================================================================
+
+# Rate limiting to avoid HTTP 429 "Too Many Requests" errors
+DOWNLOAD_DELAY_SECONDS = 0.5
 
 # Base URL where CSV files are hosted
 # Can be overridden by CSV_BASE_URL environment variable
@@ -76,7 +80,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 def download_csv(url):
     """
-    Download CSV content from a URL.
+    Download CSV content from a URL with rate limiting.
 
     Args:
         url: Full URL to the CSV file
@@ -92,6 +96,8 @@ def download_csv(url):
     response.raise_for_status()
     # Ensure UTF-8 encoding
     response.encoding = 'utf-8'
+    # Rate limiting to avoid HTTP 429 errors
+    time.sleep(DOWNLOAD_DELAY_SECONDS)
     return response.text
 
 
