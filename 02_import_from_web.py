@@ -197,7 +197,7 @@ def get_all_ids(supabase: Client, table_name: str):
 
     Args:
         supabase: Supabase client
-        table_name: Name of the table to fetch IDs from
+        table_name: Name of the table to fetch IDs from (without schema prefix)
 
     Returns:
         Set of all IDs in the table
@@ -207,7 +207,7 @@ def get_all_ids(supabase: Client, table_name: str):
     page_size = 1000
 
     while True:
-        response = supabase.table(table_name).select('id').range(offset, offset + page_size - 1).execute()
+        response = supabase.schema('wh40k').table(table_name).select('id').range(offset, offset + page_size - 1).execute()
         if not response.data:
             break
         all_ids.update(row['id'] for row in response.data)
@@ -221,6 +221,47 @@ def get_all_ids(supabase: Client, table_name: str):
 def get_valid_datasheet_ids(supabase: Client):
     """Helper to get valid datasheet IDs for child table validation."""
     return get_all_ids(supabase, 'datasheets')
+
+
+def batch_delete_by_datasheet_ids(supabase: Client, table_name: str, datasheet_ids: set):
+    """
+    Delete all records for given datasheet IDs using RPC function (POST with body).
+
+    This uses the wh40k.delete_by_ids() PostgreSQL function which accepts
+    a POST request with all IDs in the body, avoiding URI length limitations.
+    Falls back to chunked deletes if RPC function is not available.
+
+    Args:
+        supabase: Supabase client
+        table_name: Name of the table to delete from (without schema prefix)
+        datasheet_ids: Set of datasheet IDs to delete records for
+
+    Returns:
+        Number of rows deleted (if RPC succeeds), None otherwise
+    """
+    if not datasheet_ids:
+        return 0
+
+    id_list = list(datasheet_ids)
+
+    try:
+        # Try RPC function first (single POST request with all IDs in body)
+        # Note: RPC functions are called without schema prefix, but the function
+        # itself is in the wh40k schema and operates on wh40k tables
+        result = supabase.schema('wh40k').rpc('delete_by_ids', {
+            'p_table_name': table_name,
+            'p_column_name': 'datasheet_id',
+            'p_ids': id_list
+        }).execute()
+        return result.data if result.data else 0
+    except Exception as e:
+        print(f"  RPC function not available, using chunked approach: {e}")
+        # Fallback to chunked deletes (100 IDs per chunk to avoid URI too long)
+        chunk_size = 100
+        for i in range(0, len(id_list), chunk_size):
+            chunk = id_list[i:i + chunk_size]
+            supabase.schema('wh40k').table(table_name).delete().in_('datasheet_id', chunk).execute()
+        return None
 
 
 def connect_to_database():
@@ -257,7 +298,7 @@ def check_if_update_needed(supabase: Client, new_update_time):
         Boolean indicating if update is needed
     """
     try:
-        response = supabase.table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
+        response = supabase.schema('wh40k').table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
         existing_update_time = None
 
         if response.data and len(response.data) > 0:
@@ -295,7 +336,7 @@ def check_if_update_needed(supabase: Client, new_update_time):
 def import_factions(supabase: Client, data):
     """Import Factions table."""
     print("  Importing Factions...")
-    supabase.table('factions').upsert(data).execute()
+    supabase.schema('wh40k').table('factions').upsert(data).execute()
     print(f"    Processed {len(data)} factions")
 
 
@@ -305,14 +346,14 @@ def import_source(supabase: Client, data):
     # Convert date fields to proper format
     for row in data:
         row['errata_date'] = convert_date(row.get('errata_date'))
-    supabase.table('source').upsert(data).execute()
+    supabase.schema('wh40k').table('source').upsert(data).execute()
     print(f"    Processed {len(data)} sources")
 
 
 def import_last_update(supabase: Client, data):
     """Import Last_update table."""
     print("  Importing Last_update...")
-    supabase.table('last_update').upsert(data, on_conflict='last_update').execute()
+    supabase.schema('wh40k').table('last_update').upsert(data, on_conflict='last_update').execute()
     print(f"    Processed {len(data)} timestamp(s)")
 
 
@@ -320,9 +361,12 @@ def import_stratagems(supabase: Client, data):
     """Import Stratagems table."""
     print("  Importing Stratagems...")
     # Convert empty faction_id to 'UN' (Unaligned Forces) for universal stratagems
+    # Map detachment_id column to detachment (CSV uses detachment_id, schema uses detachment)
     for row in data:
         if row.get('faction_id') == '':
             row['faction_id'] = 'UN'
+        if 'detachment_id' in row:
+            row['detachment'] = row.pop('detachment_id')
 
     # Deduplicate by id (keep last occurrence)
     seen_ids = {}
@@ -330,7 +374,7 @@ def import_stratagems(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('stratagems').upsert(deduplicated_data).execute()
+    supabase.schema('wh40k').table('stratagems').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} stratagems")
 
 
@@ -348,7 +392,7 @@ def import_abilities(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('abilities').upsert(deduplicated_data).execute()
+    supabase.schema('wh40k').table('abilities').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} abilities (from {len(data)} total records)")
 
 
@@ -356,9 +400,12 @@ def import_enhancements(supabase: Client, data):
     """Import Enhancements table."""
     print("  Importing Enhancements...")
     # Convert empty faction_id to 'UN' (Unaligned Forces) for universal enhancements
+    # Map detachment_id column to detachment (CSV uses detachment_id, schema uses detachment)
     for row in data:
         if row.get('faction_id') == '':
             row['faction_id'] = 'UN'
+        if 'detachment_id' in row:
+            row['detachment'] = row.pop('detachment_id')
 
     # Deduplicate by id (keep last occurrence)
     seen_ids = {}
@@ -366,7 +413,7 @@ def import_enhancements(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('enhancements').upsert(deduplicated_data).execute()
+    supabase.schema('wh40k').table('enhancements').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} enhancements")
 
 
@@ -374,9 +421,12 @@ def import_detachment_abilities(supabase: Client, data):
     """Import Detachment_abilities table."""
     print("  Importing Detachment_abilities...")
     # Convert empty faction_id to 'UN' (Unaligned Forces) for universal detachment abilities
+    # Map detachment_id column to detachment (CSV uses detachment_id, schema uses detachment)
     for row in data:
         if row.get('faction_id') == '':
             row['faction_id'] = 'UN'
+        if 'detachment_id' in row:
+            row['detachment'] = row.pop('detachment_id')
 
     # Deduplicate by id (keep last occurrence)
     seen_ids = {}
@@ -384,7 +434,7 @@ def import_detachment_abilities(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('detachment_abilities').upsert(deduplicated_data).execute()
+    supabase.schema('wh40k').table('detachment_abilities').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} detachment abilities")
 
 
@@ -407,7 +457,7 @@ def import_datasheets(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('datasheets').upsert(deduplicated_data).execute()
+    supabase.schema('wh40k').table('datasheets').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} datasheets")
 
 
@@ -418,10 +468,8 @@ def import_datasheets_abilities(supabase: Client, data):
     # Get unique datasheet IDs
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
-    # Delete existing records for these datasheets
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_abilities', datasheet_ids)
 
     # Get existing IDs to validate foreign keys (with pagination)
     valid_ability_ids = get_all_ids(supabase, 'abilities')
@@ -447,7 +495,7 @@ def import_datasheets_abilities(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_abilities').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_abilities').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet abilities (skipped {skipped_count} with invalid ability references)")
 
 
@@ -460,9 +508,8 @@ def import_datasheets_keywords(supabase: Client, data):
 
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_keywords').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_keywords', datasheet_ids)
 
     # Filter and convert data
     valid_data = []
@@ -482,7 +529,7 @@ def import_datasheets_keywords(supabase: Client, data):
     deduplicated_data = list(seen_keys.values())
 
     if deduplicated_data:
-        supabase.table('datasheets_keywords').insert(deduplicated_data).execute()
+        supabase.schema('wh40k').table('datasheets_keywords').insert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} datasheet keywords (skipped {skipped_count} orphaned)")
 
 
@@ -493,11 +540,9 @@ def import_datasheets_models(supabase: Client, data):
     # Get valid datasheet IDs (with pagination)
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
 
-    # Filter valid datasheets and delete their existing records
+    # Filter valid datasheets and delete their existing records (batch operation)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_models').delete().eq('datasheet_id', datasheet_id).execute()
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_models', datasheet_ids)
 
     # Filter and convert data, map uppercase column names to lowercase
     valid_data = []
@@ -523,7 +568,7 @@ def import_datasheets_models(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_models').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_models').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet models (skipped {skipped_count} orphaned)")
 
 
@@ -533,9 +578,8 @@ def import_datasheets_options(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_options').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_options', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -547,7 +591,7 @@ def import_datasheets_options(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_options').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_options').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet options (skipped {skipped_count} orphaned)")
 
 
@@ -559,9 +603,8 @@ def import_datasheets_wargear(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_wargear').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_wargear', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -571,6 +614,12 @@ def import_datasheets_wargear(supabase: Client, data):
             continue
         row['line'] = convert_int(row.get('line'))
         row['line_in_wargear'] = convert_int(row.get('line_in_wargear'))
+
+        # Skip rows with NULL primary key components (line is part of PK)
+        if row['line'] is None or row['line_in_wargear'] is None:
+            skipped_count += 1
+            continue
+
         # Map uppercase stat names to lowercase for database compatibility
         if 'A' in row:
             row['a'] = row.pop('A')
@@ -585,7 +634,7 @@ def import_datasheets_wargear(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_wargear').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_wargear').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet wargear (skipped {skipped_count} orphaned)")
 
 
@@ -595,9 +644,8 @@ def import_datasheets_unit_composition(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_unit_composition').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_unit_composition', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -609,7 +657,7 @@ def import_datasheets_unit_composition(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_unit_composition').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_unit_composition').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} unit compositions (skipped {skipped_count} orphaned)")
 
 
@@ -619,9 +667,8 @@ def import_datasheets_models_cost(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_models_cost').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_models_cost', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -633,7 +680,7 @@ def import_datasheets_models_cost(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_models_cost').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_models_cost').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} model costs (skipped {skipped_count} orphaned)")
 
 
@@ -643,15 +690,14 @@ def import_datasheets_stratagems(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_stratagems').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_stratagems', datasheet_ids)
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
 
     if valid_data:
-        supabase.table('datasheets_stratagems').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_stratagems').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet-stratagem links (skipped {skipped_count} orphaned)")
 
 
@@ -661,15 +707,14 @@ def import_datasheets_enhancements(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_enhancements').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_enhancements', datasheet_ids)
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
 
     if valid_data:
-        supabase.table('datasheets_enhancements').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_enhancements').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet-enhancement links (skipped {skipped_count} orphaned)")
 
 
@@ -679,15 +724,14 @@ def import_datasheets_detachment_abilities(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_detachment_abilities').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_detachment_abilities', datasheet_ids)
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
 
     if valid_data:
-        supabase.table('datasheets_detachment_abilities').insert(valid_data).execute()
+        supabase.schema('wh40k').table('datasheets_detachment_abilities').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet-detachment ability links (skipped {skipped_count} orphaned)")
 
 
@@ -705,9 +749,8 @@ def import_datasheets_leader(supabase: Client, data):
 
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_leader').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_leader', datasheet_ids)
 
     # Both datasheet_id and attached_datasheet_id must be valid
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids and row.get('attached_datasheet_id') in valid_datasheet_ids]
@@ -722,7 +765,7 @@ def import_datasheets_leader(supabase: Client, data):
     skipped_count = len(data) - len(deduplicated_data)
 
     if deduplicated_data:
-        supabase.table('datasheets_leader').insert(deduplicated_data).execute()
+        supabase.schema('wh40k').table('datasheets_leader').insert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} leader-attachment links (skipped {skipped_count} orphaned/duplicates)")
 
 
@@ -813,19 +856,19 @@ def main():
         print("Import completed successfully!")
         print("=" * 70)
 
-        factions_count = supabase.table('factions').select('*', count='exact').execute()
+        factions_count = supabase.schema('wh40k').table('factions').select('*', count='exact').execute()
         print(f"  Factions: {factions_count.count}")
 
-        datasheets_count = supabase.table('datasheets').select('*', count='exact').execute()
+        datasheets_count = supabase.schema('wh40k').table('datasheets').select('*', count='exact').execute()
         print(f"  Datasheets: {datasheets_count.count}")
 
-        stratagems_count = supabase.table('stratagems').select('*', count='exact').execute()
+        stratagems_count = supabase.schema('wh40k').table('stratagems').select('*', count='exact').execute()
         print(f"  Stratagems: {stratagems_count.count}")
 
-        abilities_count = supabase.table('abilities').select('*', count='exact').execute()
+        abilities_count = supabase.schema('wh40k').table('abilities').select('*', count='exact').execute()
         print(f"  Abilities: {abilities_count.count}")
 
-        last_update = supabase.table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
+        last_update = supabase.schema('wh40k').table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
         if last_update.data and len(last_update.data) > 0:
             print(f"  Last update: {last_update.data[0]['last_update']}")
 
