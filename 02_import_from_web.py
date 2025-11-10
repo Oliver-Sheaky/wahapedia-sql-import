@@ -190,10 +190,37 @@ def convert_date(value):
         return None
 
 
+def get_all_ids(supabase: Client, table_name: str):
+    """
+    Helper to get ALL IDs from a table with pagination.
+    Supabase/PostgREST has a default limit of 1000 rows, so we must paginate.
+
+    Args:
+        supabase: Supabase client
+        table_name: Name of the table to fetch IDs from
+
+    Returns:
+        Set of all IDs in the table
+    """
+    all_ids = set()
+    offset = 0
+    page_size = 1000
+
+    while True:
+        response = supabase.table(table_name).select('id').range(offset, offset + page_size - 1).execute()
+        if not response.data:
+            break
+        all_ids.update(row['id'] for row in response.data)
+        if len(response.data) < page_size:
+            break
+        offset += page_size
+
+    return all_ids
+
+
 def get_valid_datasheet_ids(supabase: Client):
     """Helper to get valid datasheet IDs for child table validation."""
-    response = supabase.table('datasheets').select('id').execute()
-    return set(row['id'] for row in response.data)
+    return get_all_ids(supabase, 'datasheets')
 
 
 def connect_to_database():
@@ -396,12 +423,9 @@ def import_datasheets_abilities(supabase: Client, data):
         for datasheet_id in datasheet_ids:
             supabase.table('datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
-    # Get existing IDs to validate foreign keys
-    abilities_response = supabase.table('abilities').select('id').execute()
-    valid_ability_ids = set(row['id'] for row in abilities_response.data)
-
-    datasheets_response = supabase.table('datasheets').select('id').execute()
-    valid_datasheet_ids = set(row['id'] for row in datasheets_response.data)
+    # Get existing IDs to validate foreign keys (with pagination)
+    valid_ability_ids = get_all_ids(supabase, 'abilities')
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
 
     # Convert integer and foreign key fields, filter invalid references
     valid_data = []
@@ -431,9 +455,8 @@ def import_datasheets_keywords(supabase: Client, data):
     """Import Datasheets_keywords table."""
     print("  Importing Datasheets_keywords...")
 
-    # Get valid datasheet IDs
-    datasheets_response = supabase.table('datasheets').select('id').execute()
-    valid_datasheet_ids = set(row['id'] for row in datasheets_response.data)
+    # Get valid datasheet IDs (with pagination)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
 
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
@@ -467,9 +490,8 @@ def import_datasheets_models(supabase: Client, data):
     """Import Datasheets_models table."""
     print("  Importing Datasheets_models...")
 
-    # Get valid datasheet IDs
-    datasheets_response = supabase.table('datasheets').select('id').execute()
-    valid_datasheet_ids = set(row['id'] for row in datasheets_response.data)
+    # Get valid datasheet IDs (with pagination)
+    valid_datasheet_ids = get_valid_datasheet_ids(supabase)
 
     # Filter valid datasheets and delete their existing records
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
