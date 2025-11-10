@@ -197,7 +197,7 @@ def get_all_ids(supabase: Client, table_name: str):
 
     Args:
         supabase: Supabase client
-        table_name: Name of the table to fetch IDs from
+        table_name: Name of the table to fetch IDs from (include schema prefix e.g., 'wh40k.factions')
 
     Returns:
         Set of all IDs in the table
@@ -220,7 +220,7 @@ def get_all_ids(supabase: Client, table_name: str):
 
 def get_valid_datasheet_ids(supabase: Client):
     """Helper to get valid datasheet IDs for child table validation."""
-    return get_all_ids(supabase, 'datasheets')
+    return get_all_ids(supabase, 'wh40k.datasheets')
 
 
 def connect_to_database():
@@ -257,7 +257,7 @@ def check_if_update_needed(supabase: Client, new_update_time):
         Boolean indicating if update is needed
     """
     try:
-        response = supabase.table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
+        response = supabase.table('wh40k.last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
         existing_update_time = None
 
         if response.data and len(response.data) > 0:
@@ -295,7 +295,7 @@ def check_if_update_needed(supabase: Client, new_update_time):
 def import_factions(supabase: Client, data):
     """Import Factions table."""
     print("  Importing Factions...")
-    supabase.table('factions').upsert(data).execute()
+    supabase.table('wh40k.factions').upsert(data).execute()
     print(f"    Processed {len(data)} factions")
 
 
@@ -305,14 +305,14 @@ def import_source(supabase: Client, data):
     # Convert date fields to proper format
     for row in data:
         row['errata_date'] = convert_date(row.get('errata_date'))
-    supabase.table('source').upsert(data).execute()
+    supabase.table('wh40k.source').upsert(data).execute()
     print(f"    Processed {len(data)} sources")
 
 
 def import_last_update(supabase: Client, data):
     """Import Last_update table."""
     print("  Importing Last_update...")
-    supabase.table('last_update').upsert(data, on_conflict='last_update').execute()
+    supabase.table('wh40k.last_update').upsert(data, on_conflict='last_update').execute()
     print(f"    Processed {len(data)} timestamp(s)")
 
 
@@ -330,7 +330,7 @@ def import_stratagems(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('stratagems').upsert(deduplicated_data).execute()
+    supabase.table('wh40k.stratagems').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} stratagems")
 
 
@@ -348,7 +348,7 @@ def import_abilities(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('abilities').upsert(deduplicated_data).execute()
+    supabase.table('wh40k.abilities').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} abilities (from {len(data)} total records)")
 
 
@@ -366,7 +366,7 @@ def import_enhancements(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('enhancements').upsert(deduplicated_data).execute()
+    supabase.table('wh40k.enhancements').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} enhancements")
 
 
@@ -384,7 +384,7 @@ def import_detachment_abilities(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('detachment_abilities').upsert(deduplicated_data).execute()
+    supabase.table('wh40k.detachment_abilities').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} detachment abilities")
 
 
@@ -407,7 +407,7 @@ def import_datasheets(supabase: Client, data):
         seen_ids[row['id']] = row
     deduplicated_data = list(seen_ids.values())
 
-    supabase.table('datasheets').upsert(deduplicated_data).execute()
+    supabase.table('wh40k.datasheets').upsert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} datasheets")
 
 
@@ -421,10 +421,10 @@ def import_datasheets_abilities(supabase: Client, data):
     # Delete existing records for these datasheets
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
     # Get existing IDs to validate foreign keys (with pagination)
-    valid_ability_ids = get_all_ids(supabase, 'abilities')
+    valid_ability_ids = get_all_ids(supabase, 'wh40k.abilities')
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
 
     # Convert integer and foreign key fields, filter invalid references
@@ -447,7 +447,7 @@ def import_datasheets_abilities(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_abilities').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_abilities').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet abilities (skipped {skipped_count} with invalid ability references)")
 
 
@@ -462,7 +462,7 @@ def import_datasheets_keywords(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_keywords').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_keywords').delete().eq('datasheet_id', datasheet_id).execute()
 
     # Filter and convert data
     valid_data = []
@@ -482,7 +482,7 @@ def import_datasheets_keywords(supabase: Client, data):
     deduplicated_data = list(seen_keys.values())
 
     if deduplicated_data:
-        supabase.table('datasheets_keywords').insert(deduplicated_data).execute()
+        supabase.table('wh40k.datasheets_keywords').insert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} datasheet keywords (skipped {skipped_count} orphaned)")
 
 
@@ -497,7 +497,7 @@ def import_datasheets_models(supabase: Client, data):
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_models').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_models').delete().eq('datasheet_id', datasheet_id).execute()
 
     # Filter and convert data, map uppercase column names to lowercase
     valid_data = []
@@ -523,7 +523,7 @@ def import_datasheets_models(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_models').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_models').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet models (skipped {skipped_count} orphaned)")
 
 
@@ -535,7 +535,7 @@ def import_datasheets_options(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_options').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_options').delete().eq('datasheet_id', datasheet_id).execute()
 
     valid_data = []
     skipped_count = 0
@@ -547,7 +547,7 @@ def import_datasheets_options(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_options').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_options').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet options (skipped {skipped_count} orphaned)")
 
 
@@ -561,7 +561,7 @@ def import_datasheets_wargear(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_wargear').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_wargear').delete().eq('datasheet_id', datasheet_id).execute()
 
     valid_data = []
     skipped_count = 0
@@ -585,7 +585,7 @@ def import_datasheets_wargear(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_wargear').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_wargear').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet wargear (skipped {skipped_count} orphaned)")
 
 
@@ -597,7 +597,7 @@ def import_datasheets_unit_composition(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_unit_composition').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_unit_composition').delete().eq('datasheet_id', datasheet_id).execute()
 
     valid_data = []
     skipped_count = 0
@@ -609,7 +609,7 @@ def import_datasheets_unit_composition(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_unit_composition').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_unit_composition').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} unit compositions (skipped {skipped_count} orphaned)")
 
 
@@ -621,7 +621,7 @@ def import_datasheets_models_cost(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_models_cost').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_models_cost').delete().eq('datasheet_id', datasheet_id).execute()
 
     valid_data = []
     skipped_count = 0
@@ -633,7 +633,7 @@ def import_datasheets_models_cost(supabase: Client, data):
         valid_data.append(row)
 
     if valid_data:
-        supabase.table('datasheets_models_cost').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_models_cost').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} model costs (skipped {skipped_count} orphaned)")
 
 
@@ -645,13 +645,13 @@ def import_datasheets_stratagems(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_stratagems').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_stratagems').delete().eq('datasheet_id', datasheet_id).execute()
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
 
     if valid_data:
-        supabase.table('datasheets_stratagems').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_stratagems').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet-stratagem links (skipped {skipped_count} orphaned)")
 
 
@@ -663,13 +663,13 @@ def import_datasheets_enhancements(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_enhancements').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_enhancements').delete().eq('datasheet_id', datasheet_id).execute()
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
 
     if valid_data:
-        supabase.table('datasheets_enhancements').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_enhancements').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet-enhancement links (skipped {skipped_count} orphaned)")
 
 
@@ -681,13 +681,13 @@ def import_datasheets_detachment_abilities(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_detachment_abilities').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_detachment_abilities').delete().eq('datasheet_id', datasheet_id).execute()
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
 
     if valid_data:
-        supabase.table('datasheets_detachment_abilities').insert(valid_data).execute()
+        supabase.table('wh40k.datasheets_detachment_abilities').insert(valid_data).execute()
     print(f"    Processed {len(valid_data)} datasheet-detachment ability links (skipped {skipped_count} orphaned)")
 
 
@@ -707,7 +707,7 @@ def import_datasheets_leader(supabase: Client, data):
 
     if datasheet_ids:
         for datasheet_id in datasheet_ids:
-            supabase.table('datasheets_leader').delete().eq('datasheet_id', datasheet_id).execute()
+            supabase.table('wh40k.datasheets_leader').delete().eq('datasheet_id', datasheet_id).execute()
 
     # Both datasheet_id and attached_datasheet_id must be valid
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids and row.get('attached_datasheet_id') in valid_datasheet_ids]
@@ -722,7 +722,7 @@ def import_datasheets_leader(supabase: Client, data):
     skipped_count = len(data) - len(deduplicated_data)
 
     if deduplicated_data:
-        supabase.table('datasheets_leader').insert(deduplicated_data).execute()
+        supabase.table('wh40k.datasheets_leader').insert(deduplicated_data).execute()
     print(f"    Processed {len(deduplicated_data)} leader-attachment links (skipped {skipped_count} orphaned/duplicates)")
 
 
@@ -813,19 +813,19 @@ def main():
         print("Import completed successfully!")
         print("=" * 70)
 
-        factions_count = supabase.table('factions').select('*', count='exact').execute()
+        factions_count = supabase.table('wh40k.factions').select('*', count='exact').execute()
         print(f"  Factions: {factions_count.count}")
 
-        datasheets_count = supabase.table('datasheets').select('*', count='exact').execute()
+        datasheets_count = supabase.table('wh40k.datasheets').select('*', count='exact').execute()
         print(f"  Datasheets: {datasheets_count.count}")
 
-        stratagems_count = supabase.table('stratagems').select('*', count='exact').execute()
+        stratagems_count = supabase.table('wh40k.stratagems').select('*', count='exact').execute()
         print(f"  Stratagems: {stratagems_count.count}")
 
-        abilities_count = supabase.table('abilities').select('*', count='exact').execute()
+        abilities_count = supabase.table('wh40k.abilities').select('*', count='exact').execute()
         print(f"  Abilities: {abilities_count.count}")
 
-        last_update = supabase.table('last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
+        last_update = supabase.table('wh40k.last_update').select('last_update').order('last_update', desc=True).limit(1).execute()
         if last_update.data and len(last_update.data) > 0:
             print(f"  Last update: {last_update.data[0]['last_update']}")
 
