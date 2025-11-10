@@ -223,6 +223,24 @@ def get_valid_datasheet_ids(supabase: Client):
     return get_all_ids(supabase, 'datasheets')
 
 
+def batch_delete_by_datasheet_ids(supabase: Client, table_name: str, datasheet_ids: set):
+    """
+    Delete all records for given datasheet IDs in a single batch query.
+
+    This is much faster than looping through datasheet IDs individually,
+    as it reduces ~1,656 DELETE queries to just 1 DELETE query per table.
+
+    Args:
+        supabase: Supabase client
+        table_name: Name of the table to delete from (without schema prefix)
+        datasheet_ids: Set of datasheet IDs to delete records for
+    """
+    if not datasheet_ids:
+        return
+
+    supabase.schema('wh40k').table(table_name).delete().in_('datasheet_id', list(datasheet_ids)).execute()
+
+
 def connect_to_database():
     """
     Establish connection to Supabase using the Python client.
@@ -427,10 +445,8 @@ def import_datasheets_abilities(supabase: Client, data):
     # Get unique datasheet IDs
     datasheet_ids = set(row['datasheet_id'] for row in data)
 
-    # Delete existing records for these datasheets
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_abilities').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_abilities', datasheet_ids)
 
     # Get existing IDs to validate foreign keys (with pagination)
     valid_ability_ids = get_all_ids(supabase, 'abilities')
@@ -469,9 +485,8 @@ def import_datasheets_keywords(supabase: Client, data):
 
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_keywords').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_keywords', datasheet_ids)
 
     # Filter and convert data
     valid_data = []
@@ -502,11 +517,9 @@ def import_datasheets_models(supabase: Client, data):
     # Get valid datasheet IDs (with pagination)
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
 
-    # Filter valid datasheets and delete their existing records
+    # Filter valid datasheets and delete their existing records (batch operation)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_models').delete().eq('datasheet_id', datasheet_id).execute()
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_models', datasheet_ids)
 
     # Filter and convert data, map uppercase column names to lowercase
     valid_data = []
@@ -542,9 +555,8 @@ def import_datasheets_options(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_options').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_options', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -568,9 +580,8 @@ def import_datasheets_wargear(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_wargear').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_wargear', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -604,9 +615,8 @@ def import_datasheets_unit_composition(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_unit_composition').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_unit_composition', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -628,9 +638,8 @@ def import_datasheets_models_cost(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_models_cost').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_models_cost', datasheet_ids)
 
     valid_data = []
     skipped_count = 0
@@ -652,9 +661,8 @@ def import_datasheets_stratagems(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_stratagems').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_stratagems', datasheet_ids)
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
@@ -670,9 +678,8 @@ def import_datasheets_enhancements(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_enhancements').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_enhancements', datasheet_ids)
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
@@ -688,9 +695,8 @@ def import_datasheets_detachment_abilities(supabase: Client, data):
     valid_datasheet_ids = get_valid_datasheet_ids(supabase)
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_detachment_abilities').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_detachment_abilities', datasheet_ids)
 
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids]
     skipped_count = len(data) - len(valid_data)
@@ -714,9 +720,8 @@ def import_datasheets_leader(supabase: Client, data):
 
     datasheet_ids = set(row['datasheet_id'] for row in data if row['datasheet_id'] in valid_datasheet_ids)
 
-    if datasheet_ids:
-        for datasheet_id in datasheet_ids:
-            supabase.schema('wh40k').table('datasheets_leader').delete().eq('datasheet_id', datasheet_id).execute()
+    # Delete existing records for these datasheets (batch operation)
+    batch_delete_by_datasheet_ids(supabase, 'datasheets_leader', datasheet_ids)
 
     # Both datasheet_id and attached_datasheet_id must be valid
     valid_data = [row for row in data if row['datasheet_id'] in valid_datasheet_ids and row.get('attached_datasheet_id') in valid_datasheet_ids]
