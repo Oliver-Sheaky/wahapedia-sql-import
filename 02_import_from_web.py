@@ -320,9 +320,12 @@ def import_stratagems(supabase: Client, data):
     """Import Stratagems table."""
     print("  Importing Stratagems...")
     # Convert empty faction_id to 'UN' (Unaligned Forces) for universal stratagems
+    # Map detachment_id column to detachment (CSV uses detachment_id, schema uses detachment)
     for row in data:
         if row.get('faction_id') == '':
             row['faction_id'] = 'UN'
+        if 'detachment_id' in row:
+            row['detachment'] = row.pop('detachment_id')
 
     # Deduplicate by id (keep last occurrence)
     seen_ids = {}
@@ -356,9 +359,12 @@ def import_enhancements(supabase: Client, data):
     """Import Enhancements table."""
     print("  Importing Enhancements...")
     # Convert empty faction_id to 'UN' (Unaligned Forces) for universal enhancements
+    # Map detachment_id column to detachment (CSV uses detachment_id, schema uses detachment)
     for row in data:
         if row.get('faction_id') == '':
             row['faction_id'] = 'UN'
+        if 'detachment_id' in row:
+            row['detachment'] = row.pop('detachment_id')
 
     # Deduplicate by id (keep last occurrence)
     seen_ids = {}
@@ -374,9 +380,12 @@ def import_detachment_abilities(supabase: Client, data):
     """Import Detachment_abilities table."""
     print("  Importing Detachment_abilities...")
     # Convert empty faction_id to 'UN' (Unaligned Forces) for universal detachment abilities
+    # Map detachment_id column to detachment (CSV uses detachment_id, schema uses detachment)
     for row in data:
         if row.get('faction_id') == '':
             row['faction_id'] = 'UN'
+        if 'detachment_id' in row:
+            row['detachment'] = row.pop('detachment_id')
 
     # Deduplicate by id (keep last occurrence)
     seen_ids = {}
