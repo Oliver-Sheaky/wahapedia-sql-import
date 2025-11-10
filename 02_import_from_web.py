@@ -225,27 +225,43 @@ def get_valid_datasheet_ids(supabase: Client):
 
 def batch_delete_by_datasheet_ids(supabase: Client, table_name: str, datasheet_ids: set):
     """
-    Delete all records for given datasheet IDs using chunked batch queries.
+    Delete all records for given datasheet IDs using RPC function (POST with body).
 
-    Due to URI length limitations, we chunk the IDs into groups of 100
-    to avoid "URI too long" errors while still being much faster than
-    individual deletes.
+    This uses the wh40k.delete_by_ids() PostgreSQL function which accepts
+    a POST request with all IDs in the body, avoiding URI length limitations.
+    Falls back to chunked deletes if RPC function is not available.
 
     Args:
         supabase: Supabase client
         table_name: Name of the table to delete from (without schema prefix)
         datasheet_ids: Set of datasheet IDs to delete records for
+
+    Returns:
+        Number of rows deleted (if RPC succeeds), None otherwise
     """
     if not datasheet_ids:
-        return
+        return 0
 
-    # Chunk IDs to avoid URI too long errors (100 IDs per chunk)
     id_list = list(datasheet_ids)
-    chunk_size = 100
 
-    for i in range(0, len(id_list), chunk_size):
-        chunk = id_list[i:i + chunk_size]
-        supabase.schema('wh40k').table(table_name).delete().in_('datasheet_id', chunk).execute()
+    try:
+        # Try RPC function first (single POST request with all IDs in body)
+        # Note: RPC functions are called without schema prefix, but the function
+        # itself is in the wh40k schema and operates on wh40k tables
+        result = supabase.schema('wh40k').rpc('delete_by_ids', {
+            'p_table_name': table_name,
+            'p_column_name': 'datasheet_id',
+            'p_ids': id_list
+        }).execute()
+        return result.data if result.data else 0
+    except Exception as e:
+        print(f"  RPC function not available, using chunked approach: {e}")
+        # Fallback to chunked deletes (100 IDs per chunk to avoid URI too long)
+        chunk_size = 100
+        for i in range(0, len(id_list), chunk_size):
+            chunk = id_list[i:i + chunk_size]
+            supabase.schema('wh40k').table(table_name).delete().in_('datasheet_id', chunk).execute()
+        return None
 
 
 def connect_to_database():
@@ -598,6 +614,12 @@ def import_datasheets_wargear(supabase: Client, data):
             continue
         row['line'] = convert_int(row.get('line'))
         row['line_in_wargear'] = convert_int(row.get('line_in_wargear'))
+
+        # Skip rows with NULL primary key components (line is part of PK)
+        if row['line'] is None or row['line_in_wargear'] is None:
+            skipped_count += 1
+            continue
+
         # Map uppercase stat names to lowercase for database compatibility
         if 'A' in row:
             row['a'] = row.pop('A')
