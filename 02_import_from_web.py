@@ -225,10 +225,11 @@ def get_valid_datasheet_ids(supabase: Client):
 
 def batch_delete_by_datasheet_ids(supabase: Client, table_name: str, datasheet_ids: set):
     """
-    Delete all records for given datasheet IDs in a single batch query.
+    Delete all records for given datasheet IDs using chunked batch queries.
 
-    This is much faster than looping through datasheet IDs individually,
-    as it reduces ~1,656 DELETE queries to just 1 DELETE query per table.
+    Due to URI length limitations, we chunk the IDs into groups of 100
+    to avoid "URI too long" errors while still being much faster than
+    individual deletes.
 
     Args:
         supabase: Supabase client
@@ -238,7 +239,13 @@ def batch_delete_by_datasheet_ids(supabase: Client, table_name: str, datasheet_i
     if not datasheet_ids:
         return
 
-    supabase.schema('wh40k').table(table_name).delete().in_('datasheet_id', list(datasheet_ids)).execute()
+    # Chunk IDs to avoid URI too long errors (100 IDs per chunk)
+    id_list = list(datasheet_ids)
+    chunk_size = 100
+
+    for i in range(0, len(id_list), chunk_size):
+        chunk = id_list[i:i + chunk_size]
+        supabase.schema('wh40k').table(table_name).delete().in_('datasheet_id', chunk).execute()
 
 
 def connect_to_database():
