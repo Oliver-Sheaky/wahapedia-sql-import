@@ -14,9 +14,10 @@ This system provides a robust solution for importing Warhammer 40K data from Wah
 ## Files Included
 
 1. **01_create_tables.sql** - Creates the complete database schema
-2. **02_upsert_data.sql** - Imports CSV data from local files without duplication
-3. **03_import_from_web.py** - Python script to download and import CSVs from web URLs
+2. **02_import_from_web.py** - Python script to download and import CSVs from web URLs
+3. **03_test_csv_download.py** - Test script to validate CSV downloads without database
 4. **README.md** - This documentation file
+5. **example.env** - Configuration template
 
 ## Database Schema
 
@@ -80,125 +81,205 @@ Source
 
 ## Installation & Usage
 
-There are two methods to import data: **from web URLs** (recommended for Supabase) or **from local CSV files**.
-
-### Method 1: Import from Web URLs (Recommended for Supabase)
-
-This method downloads CSVs directly from web URLs and imports them into your local Supabase database.
-
-#### Prerequisites
+### Prerequisites
 
 Install required Python packages:
 ```bash
-pip install psycopg2-binary requests python-dotenv
+pip install supabase requests python-dotenv
 ```
 
-#### Step 1: Create the Database Schema
+### Step 1: Create the Database Schema
 
-Run the table creation script first:
+Run the table creation script to set up your Supabase database:
 
 ```bash
-# For local Supabase (default port 54322)
+# For local Supabase - run from your Supabase project directory
+cd path/to/your/supabase-project
+supabase db reset  # If needed to start fresh
+
+# Or manually via psql
 psql -h localhost -p 54322 -U postgres -d postgres -f 01_create_tables.sql
 ```
 
-#### Step 2: Configure the Python Script
+### Step 2: Configure Environment Variables
 
-Edit [03_import_from_web.py](C:\Users\Ollie\Downloads\03_import_from_web.py) and update:
+Copy `example.env` to `.env` and update with your Supabase credentials:
 
-1. **CSV_BASE_URL** - The base URL where CSV files are hosted
-   ```python
-   CSV_BASE_URL = "https://wahapedia.ru/wh40k10ed/Export/"
-   ```
-
-2. **DATABASE_CONFIG** - Your local Supabase connection details
-   ```python
-   DATABASE_CONFIG = {
-       "host": "localhost",
-       "port": 54322,  # Default Supabase local port
-       "database": "postgres",
-       "user": "postgres",
-       "password": "your_password_here",
-   }
-   ```
-
-Alternatively, create a `.env` file:
 ```env
-DB_HOST=localhost
-DB_PORT=54322
-DB_NAME=postgres
-DB_USER=postgres
-DB_PASSWORD=your_password_here
+# CSV Base URL - Where the CSV files are hosted
+CSV_BASE_URL=http://wahapedia.ru/wh40k10ed/
+
+# Supabase Configuration
+SUPABASE_URL=http://localhost:8000
+SUPABASE_KEY=your-service-role-key-here
 ```
 
-#### Step 3: Run the Import Script
+**Finding your Supabase credentials:**
+- `SUPABASE_URL`: For local Supabase, use `http://localhost:8000` (Kong API gateway)
+- `SUPABASE_KEY`: Find in your Supabase project's `.env` file as `SERVICE_ROLE_KEY`
+
+### Step 3: Run the Import Script
 
 ```bash
-python 03_import_from_web.py
+python 02_import_from_web.py
 ```
 
 The script will:
-1. Download `Last_update.csv` and check if new data is available
-2. Skip import if data is already up-to-date
-3. Download all CSV files from the web
-4. Import data in the correct order respecting foreign keys
-5. Handle duplicates intelligently with UPSERT logic
-6. Display a summary of imported records
+1. ✅ Download `Last_update.csv` and check if new data is available
+2. ✅ Skip import if data is already up-to-date
+3. ✅ Download all CSV files from the web (with rate limiting)
+4. ✅ Import data in the correct order respecting foreign keys
+5. ✅ Handle duplicates, orphaned records, and schema mismatches automatically
+6. ✅ Display a detailed summary of imported records
 
-**Features:**
-- ✅ Downloads directly from web URLs (no local CSV files needed)
-- ✅ Automatic update checking via timestamp comparison
-- ✅ Handles missing or failed downloads gracefully
-- ✅ Converts boolean and integer fields properly
-- ✅ Transaction-based (rolls back on errors)
+**Import Statistics (typical run):**
+- 26 factions
+- 1,656 datasheets
+- 1,272 stratagems
+- 120,000+ total records across 19 tables
 
----
+### Step 4: (Optional) Test CSV Downloads
 
-### Method 2: Import from Local CSV Files
-
-If you already have CSV files downloaded locally, use this method.
-
-#### Step 1: Create the Database Schema
+Before running the full import, you can test that CSV downloads work:
 
 ```bash
-# For PostgreSQL/Supabase
-psql -h localhost -p 54322 -U postgres -d postgres -f 01_create_tables.sql
-
-# For SQL Server
-sqlcmd -S your_server -d your_database -i 01_create_tables.sql
-
-# For MySQL
-mysql -u your_username -p your_database < 01_create_tables.sql
+python 03_test_csv_download.py
 ```
 
-#### Step 2: Configure CSV File Paths
+This validates the CSV_BASE_URL and checks file accessibility without touching the database
 
-Edit [02_upsert_data.sql](C:\Users\Ollie\Downloads\02_upsert_data.sql) and replace all instances of `'path/to/csv/'` with your actual CSV directory path.
+## Error Handling & Automatic Workarounds
 
-**Example:**
-```sql
--- Change this:
-COPY temp_factions FROM 'path/to/csv/Factions.csv'
+The import script includes comprehensive error handling that automatically resolves common data quality issues:
 
--- To this (Windows):
-COPY temp_factions FROM 'C:/Users/YourName/Downloads/Wahapedia_CSV/Factions.csv'
+### 1. Date Format Conversion
 
--- Or this (Linux/Mac):
-COPY temp_factions FROM '/home/username/wahapedia/Factions.csv'
+**Issue**: CSV files contain dates in DD.MM.YYYY format, but PostgreSQL expects YYYY-MM-DD
+
+**Automatic Fix**: The script automatically converts date formats:
+```python
+# Example: "09.07.2025" → "2025-07-09"
+def convert_date(value):
+    date_part = value.split(' ')[0]  # Remove time portion
+    parts = date_part.split('.')
+    if len(parts) == 3:
+        day, month, year = parts
+        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
 ```
 
-#### Step 3: Run the Data Ingestion Script
+**Impact**: Errata dates are automatically formatted correctly during import.
 
-```bash
-# For PostgreSQL/Supabase
-psql -h localhost -p 54322 -U postgres -d postgres -f 02_upsert_data.sql
+### 2. Foreign Key Validation
+
+**Issue**: CSV files may reference IDs that don't exist in parent tables (orphaned records)
+
+**Automatic Fix**: The script validates all foreign keys before insertion:
+```python
+# Example: Skip abilities that reference non-existent ability_id
+abilities_response = supabase.table('abilities').select('id').execute()
+valid_ability_ids = set(row['id'] for row in abilities_response.data)
+
+if row['ability_id'] not in valid_ability_ids:
+    # Skip this record
+    continue
 ```
 
-The script will:
-1. Check if new data is available by comparing timestamps
-2. Skip import if data is already up-to-date
-3. Import all CSV files in the correct order
-4. Handle duplicates intelligently with UPSERT logic
+**Impact**: Orphaned records are automatically filtered out, preventing foreign key constraint violations.
+
+### 3. Duplicate Record Handling
+
+**Issue**: CSV files may contain duplicate IDs
+
+**Automatic Fix**: The script deduplicates records before insertion:
+```python
+# Keep only the last occurrence of each ID
+seen_ids = {}
+for row in data:
+    seen_ids[row['id']] = row
+deduplicated_data = list(seen_ids.values())
+```
+
+**Impact**: Prevents "ON CONFLICT DO UPDATE command cannot affect row a second time" errors.
+
+### 4. Empty Foreign Key Defaults
+
+**Issue**: Some records have empty strings for required foreign key fields
+
+**Automatic Fix**: The script applies sensible defaults:
+```python
+# Default to 'UN' (Unaligned Forces) for empty faction_id
+if row.get('faction_id') == '':
+    row['faction_id'] = 'UN'
+
+# Default to generic source for empty source_id
+if row.get('source_id') == '':
+    row['source_id'] = '000000012'
+```
+
+**Impact**: Records with missing foreign keys are assigned to default categories.
+
+### 5. Schema Column Mapping
+
+**Issue**: CSV column names don't always match database schema (uppercase vs lowercase, different names)
+
+**Automatic Fix**: The script maps CSV columns to database columns:
+```python
+# Uppercase to lowercase mapping
+if 'M' in row: row['m'] = row.pop('M')
+if 'T' in row: row['t'] = row.pop('T')
+if 'Ld' in row: row['ld'] = row.pop('Ld')
+
+# Different column names
+if 'leader_id' in row: row['datasheet_id'] = row.pop('leader_id')
+if 'attached_id' in row: row['attached_datasheet_id'] = row.pop('attached_id')
+```
+
+**Impact**: No manual CSV editing required - schema differences are handled automatically.
+
+### 6. Rate Limiting
+
+**Issue**: Downloading too many CSV files too quickly may trigger HTTP 429 "Too Many Requests" errors
+
+**Automatic Fix**: The script includes a 0.5-second delay between downloads:
+```python
+DOWNLOAD_DELAY_SECONDS = 0.5
+
+def download_csv(url):
+    # ... download logic ...
+    time.sleep(DOWNLOAD_DELAY_SECONDS)  # Rate limiting
+```
+
+**Impact**: Prevents overwhelming the Wahapedia server with requests.
+
+### 7. Composite Key Deduplication
+
+**Issue**: Child tables with composite primary keys may have duplicate combinations
+
+**Automatic Fix**: The script deduplicates by composite key:
+```python
+# Example: Datasheets_keywords uses (datasheet_id, keyword) as primary key
+seen_keys = {}
+for row in data:
+    key = (row['datasheet_id'], row['keyword'])
+    seen_keys[key] = row
+deduplicated_data = list(seen_keys.values())
+```
+
+**Impact**: Prevents composite primary key violations in junction tables.
+
+### Summary of Automatic Fixes
+
+All these workarounds are applied automatically during import - no manual intervention required:
+
+- ✅ Date format conversion (DD.MM.YYYY → YYYY-MM-DD)
+- ✅ Orphaned foreign key filtering
+- ✅ Duplicate record deduplication
+- ✅ Empty foreign key defaults ('UN' for factions, '000000012' for sources)
+- ✅ Schema column name mapping (M→m, leader_id→datasheet_id, etc.)
+- ✅ HTTP rate limiting (0.5s delay between downloads)
+- ✅ Composite key deduplication for junction tables
+
+The script reports skipped/modified records during import so you can track what data quality issues were encountered.
 
 ## Smart Update Detection
 
@@ -300,7 +381,7 @@ Datasheets_stratagems.stratagem_id → Stratagems.id
 6. **Datasheets_* child tables** (depend on Datasheets)
 7. **Junction tables** (depend on both parent tables)
 
-The `02_upsert_data.sql` script follows this order automatically.
+The [02_import_from_web.py](02_import_from_web.py) script follows this order automatically.
 
 ## Performance Optimizations
 
@@ -318,62 +399,32 @@ Child tables use composite primary keys (e.g., `datasheet_id + line`) for:
 
 ## Database Compatibility
 
-### PostgreSQL (Primary Target)
-The scripts are written for PostgreSQL but include notes for other databases.
+### Supabase / PostgreSQL (Primary Target)
+
+This system is designed for **Supabase** (PostgreSQL-based) using the official Supabase Python client.
+
+**Connection Method:**
+- Uses Supabase Python client (`supabase-py`) instead of direct PostgreSQL connection
+- Connects via Kong API gateway (port 8000) which bypasses Supavisor tenant authentication
+- Requires `SUPABASE_URL` and `SUPABASE_KEY` (service role key) from your Supabase project
 
 **Features used:**
-- COPY command for CSV import
-- TEMP TABLE for staging
-- MERGE statements for UPSERT
+- Supabase table operations (`.select()`, `.upsert()`, `.insert()`, `.delete()`)
 - BOOLEAN data type
 - TEXT data type
+- DATE and TIMESTAMP data types
+- Foreign key constraints
+- Composite primary keys
 
-### SQL Server Adaptation
-Replace the following:
+**Local Supabase Setup:**
+- Install Supabase CLI: `npm install -g supabase`
+- Initialize project: `supabase init`
+- Start services: `supabase start`
+- Apply schema: `supabase db reset` or `psql -h localhost -p 54322 -U postgres -d postgres -f 01_create_tables.sql`
 
-```sql
--- Data Types
-TIMESTAMP → DATETIME2
-TEXT → VARCHAR(MAX)
-CURRENT_TIMESTAMP → GETDATE()
-
--- CSV Import
-COPY → BULK INSERT
-TEMP TABLE → #temp_table
-
--- Example:
-BULK INSERT #temp_factions
-FROM 'C:\path\to\Factions.csv'
-WITH (
-    FIELDTERMINATOR = '|',
-    ROWTERMINATOR = '\n',
-    FIRSTROW = 2,
-    CODEPAGE = '65001'  -- UTF-8
-);
-```
-
-### MySQL Adaptation
-Replace the following:
-
-```sql
--- Data Types
-TIMESTAMP → DATETIME
-(TEXT is compatible)
-(BOOLEAN converts to TINYINT automatically)
-
--- CSV Import
-COPY → LOAD DATA INFILE
-TEMP TABLE → TEMPORARY TABLE
-MERGE → INSERT ... ON DUPLICATE KEY UPDATE
-
--- Example:
-LOAD DATA INFILE '/path/to/Factions.csv'
-INTO TABLE temp_factions
-FIELDS TERMINATED BY '|'
-LINES TERMINATED BY '\n'
-IGNORE 1 ROWS
-(id, name, link);
-```
+**Cloud Supabase:**
+- Update `SUPABASE_URL` to your project URL (e.g., `https://xxxx.supabase.co`)
+- Use the service role key from your project settings
 
 ## Example Queries
 
@@ -419,41 +470,50 @@ FROM Last_update;
 
 ## Troubleshooting
 
-### Foreign Key Constraint Errors
-**Problem**: Import fails due to missing parent records
+### Connection Issues
 
-**Solution**: Ensure CSVs are complete and reference data exists
+**Problem**: "Tenant or user not found" errors when connecting
+
+**Solution**: Ensure you're using the Supabase Python client (not direct PostgreSQL connection):
+- Use `SUPABASE_URL=http://localhost:8000` (Kong gateway, not direct Postgres port)
+- Use service role key from your Supabase project's `.env` file
+- Verify Supabase is running: `supabase status`
+
+### Import Script Errors
+
+**Problem**: Missing Python modules
+
+**Solution**: Install required packages:
+```bash
+pip install supabase requests python-dotenv
+```
+
+**Problem**: HTTP 429 "Too Many Requests" errors
+
+**Solution**: The script includes automatic rate limiting (0.5s delay). If you still encounter issues, increase `DOWNLOAD_DELAY_SECONDS` in [02_import_from_web.py](02_import_from_web.py).
+
+**Problem**: Foreign key constraint errors
+
+**Solution**: These are handled automatically by the script - it validates all foreign keys before insertion and skips orphaned records. Check the import summary for "skipped" record counts.
+
+**Problem**: Date format errors
+
+**Solution**: Handled automatically - the script converts DD.MM.YYYY to YYYY-MM-DD format.
+
+### Database Queries
+
+**Problem**: Finding orphaned references after import
+
+**Solution**: Check for data quality issues:
 ```sql
--- Check for orphaned references
+-- Check for orphaned datasheets (shouldn't happen with automatic validation)
 SELECT DISTINCT faction_id FROM Datasheets
 WHERE faction_id NOT IN (SELECT id FROM Factions);
-```
 
-### Duplicate Key Errors
-**Problem**: Primary key violations
-
-**Solution**: This shouldn't happen with MERGE statements, but if it does:
-```sql
--- Find duplicates in CSV before import
-SELECT id, COUNT(*) FROM temp_factions GROUP BY id HAVING COUNT(*) > 1;
-```
-
-### CSV Import Errors
-**Problem**: COPY command fails
-
-**Solution**: Check file permissions and encoding
-```sql
--- Verify file path and permissions
--- Ensure UTF-8 encoding (no BOM)
--- Confirm pipe delimiter
-```
-
-### Boolean Conversion Issues
-**Problem**: "true"/"false" strings not converting
-
-**Solution**: The script handles this with CASE statements:
-```sql
-CASE WHEN LOWER(virtual) = 'true' THEN true ELSE false END
+-- Verify all foreign key relationships
+SELECT COUNT(*) as orphaned_datasheets
+FROM Datasheets d
+WHERE NOT EXISTS (SELECT 1 FROM Factions f WHERE f.id = d.faction_id);
 ```
 
 ## Maintenance
@@ -486,10 +546,15 @@ WHERE NOT EXISTS (SELECT 1 FROM Factions f WHERE f.id = d.faction_id);
 ```
 
 ### Re-importing Data
-Simply run `02_upsert_data.sql` again. The script will:
-1. Check if data is newer
-2. Update only changed records
-3. Skip if already current
+Simply run [02_import_from_web.py](02_import_from_web.py) again. The script will:
+1. Check if data is newer (via `Last_update.csv` timestamp comparison)
+2. Update only changed records (using `.upsert()` for parent tables)
+3. Skip import entirely if data hasn't changed
+
+**Manual re-import**: To force a full re-import even if timestamps match, delete all records from the `Last_update` table first:
+```sql
+DELETE FROM Last_update;
+```
 
 ## License & Credits
 
@@ -500,11 +565,19 @@ The SQL schema and ingestion scripts are provided as-is for educational and pers
 ## Support
 
 For issues or questions:
-1. Check the troubleshooting section
-2. Verify your CSV files match the expected format
-3. Ensure your SQL database supports the required features
-4. Review the database-specific adaptation notes
+1. Check the [Error Handling & Automatic Workarounds](#error-handling--automatic-workarounds) section
+2. Review the [Troubleshooting](#troubleshooting) section
+3. Verify your Supabase connection settings in `.env`
+4. Check that Supabase is running: `supabase status`
+5. Review import logs for skipped/modified record counts
 
 ## Version History
 
-- **v1.0** - Initial release with full schema and UPSERT logic
+- **v2.0** - Major refactor to use Supabase Python client
+  - Switched from psycopg2 to supabase-py library
+  - Added comprehensive error handling and automatic workarounds
+  - Added rate limiting for CSV downloads
+  - Simplified workflow (removed SQL-based import method)
+  - Added automatic data quality fixes (date conversion, deduplication, foreign key validation)
+
+- **v1.0** - Initial release with full schema and SQL-based UPSERT logic
