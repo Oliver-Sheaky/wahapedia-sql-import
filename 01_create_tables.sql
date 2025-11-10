@@ -430,6 +430,24 @@ CREATE INDEX idx_detachment_abilities_faction_id ON wh40k.Detachment_abilities(f
 CREATE INDEX idx_source_errata_date ON wh40k.Source(errata_date);
 
 -- =====================================================================
+-- GRANT PERMISSIONS
+-- =====================================================================
+-- Grant necessary permissions to Supabase roles for accessing the wh40k schema
+
+-- Grant USAGE on the wh40k schema to all roles
+GRANT USAGE ON SCHEMA wh40k TO anon, authenticated, service_role;
+
+-- Grant SELECT, INSERT, UPDATE, DELETE on all tables to all roles
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA wh40k TO anon, authenticated, service_role;
+
+-- Grant permissions on all future tables (automatically applied)
+ALTER DEFAULT PRIVILEGES IN SCHEMA wh40k GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated, service_role;
+
+-- Grant USAGE on all sequences (for auto-incrementing IDs, if any)
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA wh40k TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA wh40k GRANT USAGE ON SEQUENCES TO anon, authenticated, service_role;
+
+-- =====================================================================
 -- NOTES FOR OTHER SQL DATABASES
 -- =====================================================================
 --
